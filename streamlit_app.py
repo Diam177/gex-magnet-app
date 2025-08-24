@@ -6,20 +6,20 @@ import pandas as pd
 import plotly.graph_objects as go
 import streamlit as st
 
-# =============== UI/страница ===============
+# ====================== Страница ======================
 st.set_page_config(page_title="GEX Levels & Magnet Profile", layout="wide")
 st.title("GEX Levels & Magnet Profile (по комбинированной методике)")
 
-# =============== Константы методики ===============
+# ====================== Константы методики ======================
 SECONDS_PER_YEAR = 31557600.0
-DEFAULT_R = 0.01   # r
-DEFAULT_Q = 0.00   # q
-H_EXP = 7.0        # полупериод в W_exp
-KAPPA = 1.0        # параметр достижимости W_dist
-SMOOTH_WINDOW = 3  # сглаживание по страйкам
-TOP_N_LEVELS = 5   # топ-магнитов на сторону
+DEFAULT_R = 0.01   # безарбитражная ставка r (по умолчанию)
+DEFAULT_Q = 0.00   # дивидендная доходность q (по умолчанию)
+H_EXP = 7.0        # h в W_exp = 2^(-DTE/h), дни
+KAPPA = 1.0        # κ в W_dist
+SMOOTH_WINDOW = 3  # ширина сглаживания по страйкам
+TOP_N_LEVELS = 5   # сколько магнитов показывать на сторону
 
-# =============== Secrets/ввод ===============
+# ====================== Секреты / ввод ======================
 host_default = st.secrets.get("RAPIDAPI_HOST", "")
 key_default  = st.secrets.get("RAPIDAPI_KEY", "")
 
@@ -27,54 +27,71 @@ with st.sidebar:
     st.header("Провайдер (RapidAPI)")
     RAPIDAPI_HOST = st.text_input("X-RapidAPI-Host", host_default, placeholder="yahoo-finance15.p.rapidapi.com")
     RAPIDAPI_KEY  = st.text_input("X-RapidAPI-Key",  key_default, type="password")
-    st.caption("Храни ключи в Secrets Streamlit (рекомендовано).")
+    st.caption("Рекомендуется хранить ключи в Secrets Streamlit.")
     st.divider()
     ticker = st.text_input("Тикер", value="SPY").strip().upper()
     btn_load = st.button("Загрузить экспирации")
     with st.expander("Параметры методики", expanded=False):
-        st.write("Изменять при необходимости:")
-        _h = st.slider("h (вес экспирации, дней)", 3.0, 14.0, H_EXP, 0.5)
-        _k = st.slider("κ (достижимость)", 0.5, 2.0, KAPPA, 0.1)
-        _w = st.select_slider("Сглаживание по страйку", options=[1,3,5,7], value=SMOOTH_WINDOW)
-        H_EXP, KAPPA, SMOOTH_WINDOW = _h, _k, _w
+        H_EXP   = st.slider("h (вес экспирации, дней)", 3.0, 14.0, H_EXP, 0.5)
+        KAPPA   = st.slider("κ (достижимость)", 0.5, 2.0, KAPPA, 0.1)
+        SMOOTH_WINDOW = st.select_slider("Сглаживание по страйку", options=[1,3,5,7], value=SMOOTH_WINDOW)
 
-# =============== API под YH Finance v1 /markets/options ===============
+# ====================== API под YH Finance v1 /markets/options ======================
 def api_headers():
     return {"X-RapidAPI-Key": RAPIDAPI_KEY, "X-RapidAPI-Host": RAPIDAPI_HOST}
 
-BASE_URL = lambda: f"https://{RAPIDAPI_HOST}/api/v1/markets/options"
+def BASE_URL():
+    return f"https://{RAPIDAPI_HOST}/api/v1/markets/options"
 
 def _try_get(url: str, params: dict | None = None):
     r = requests.get(url, headers=api_headers(), params=params or {}, timeout=25)
     if r.status_code == 200:
-        return r.json()
+        try:
+            return r.json()
+        except Exception:
+            raise requests.HTTPError(f"Bad JSON from {url}")
     raise requests.HTTPError(f"{r.status_code} {url}\n{r.text[:400]}")
 
 def fetch_chain_raw(symbol: str):
     """
-    Список экспираций/текущая цепочка.
-    Пример: GET /api/v1/markets/options?ticker=SPY
+    Список доступных экспираций/текущая цепочка.
+    ВАЖНО: для провайдера требуется display=straddle.
     """
-    raw = _try_get(BASE_URL(), params={"ticker": symbol})
-    return raw
+    return _try_get(BASE_URL(), params={"ticker": symbol, "display": "straddle"})
+
+def fetch_specific_expiry(symbol: str, epoch: int):
+    """
+    Конкретная дата экспирации.
+    """
+    raw = _try_get(BASE_URL(), params={"ticker": symbol, "expiration": int(epoch), "display": "straddle"})
+    shaped = ensure_chain_shape(raw)
+    for ch in shaped["chains"]:
+        if ch.get("expiration") == int(epoch):
+            return {"quote": shaped.get("quote", {}), "chain": ch}
+    if shaped["chains"]:
+        return {"quote": shaped.get("quote", {}), "chain": shaped["chains"][0]}
+    return {"quote": shaped.get("quote", {}), "chain": {"expiration": int(epoch), "calls": [], "puts": []}}
 
 def ensure_chain_shape(raw: dict):
     """
-    Приводим JSON к виду:
-    { 'quote': {...}, 'expirationDates': [epoch,...],
-      'chains': [{ 'expiration': epoch, 'calls': [...], 'puts': [...] }, ...] }
+    Унификация произвольного ответа к виду:
+      {
+        'quote': {'regularMarketPrice': float, 'regularMarketTime': int},
+        'expirationDates': [epoch, ...],
+        'chains': [{'expiration': epoch, 'calls': [...], 'puts': [...]}, ...]
+      }
     """
     quote = {}
 
     # --- expirations ---
     expirationDates = []
-    # частые места для дат:
+    # прямые ключи
     for k in ("expirationDates", "expirations", "dates"):
         v = raw.get(k)
         if isinstance(v, list) and all(isinstance(x, (int, float)) for x in v):
             expirationDates = [int(x) for x in v]
             break
-    # иногда даты лежат внутри data/result
+    # вложенные места: data / result
     if not expirationDates:
         for up in ("data", "result"):
             v = raw.get(up)
@@ -84,8 +101,10 @@ def ensure_chain_shape(raw: dict):
                     if isinstance(vv, list) and all(isinstance(x, (int, float)) for x in vv):
                         expirationDates = [int(x) for x in vv]
                         break
+            if expirationDates:
+                break
 
-    # --- quote (цена/время) ---
+    # --- quote: цена и время ---
     def _get_num(paths):
         for path in paths:
             cur = raw
@@ -94,27 +113,29 @@ def ensure_chain_shape(raw: dict):
                 if isinstance(cur, dict) and key in cur:
                     cur = cur[key]
                 else:
-                    ok = False
-                    break
+                    ok = False; break
             if ok and isinstance(cur, (int, float)):
                 return cur
         return None
 
     price = _get_num([("quote","regularMarketPrice"),
-                      ("underlying","price"),
+                      ("data","quote","regularMarketPrice"),
+                      ("underlying","price"), ("data","underlying","price"),
                       ("price",), ("last",), ("underlyingPrice",)])
     ttime = _get_num([("quote","regularMarketTime"),
-                      ("underlying","time"),
+                      ("data","quote","regularMarketTime"),
+                      ("underlying","time"), ("data","underlying","time"),
                       ("time",), ("timestamp",)])
-    if price is not None: quote["regularMarketPrice"] = float(price)
-    if ttime is not None: quote["regularMarketTime"] = int(ttime)
+    if price is not None:  quote["regularMarketPrice"] = float(price)
+    if ttime is not None:  quote["regularMarketTime"]  = int(ttime)
 
-    # --- chains (если провайдер вернул сразу массив call/put) ---
+    # --- chains: ищем и сверху, и в data/result ---
     chains = []
     possible_nodes = [raw]
     for k in ("options","data","result","chain","chains"):
         v = raw.get(k)
-        if isinstance(v, (dict, list)): possible_nodes.append(v)
+        if isinstance(v, (dict, list)):
+            possible_nodes.append(v)
 
     def _as_list(x):
         if isinstance(x, list): return x
@@ -134,28 +155,14 @@ def ensure_chain_shape(raw: dict):
     for ch in chains:
         exp = ch.get("expiration")
         sig = (exp, len(ch.get("calls", [])) + len(ch.get("puts", [])))
-        if exp is None or sig in seen: continue
+        if exp is None or sig in seen:
+            continue
         seen.add(sig); norm.append(ch)
     norm.sort(key=lambda x: x.get("expiration", 0))
 
     return {"quote": quote, "expirationDates": expirationDates, "chains": norm}
 
-def fetch_specific_expiry(symbol: str, epoch: int):
-    """
-    Конкретная дата:
-    GET /api/v1/markets/options?ticker=SPY&expiration=<epoch>
-    """
-    raw = _try_get(BASE_URL(), params={"ticker": symbol, "expiration": int(epoch)})
-    shaped = ensure_chain_shape(raw)
-    for ch in shaped["chains"]:
-        if ch.get("expiration") == int(epoch):
-            return {"quote": shaped.get("quote", {}), "chain": ch}
-    if shaped["chains"]:
-        return {"quote": shaped.get("quote", {}), "chain": shaped["chains"][0]}
-    # fallback — пустая оболочка цепочки
-    return {"quote": shaped.get("quote", {}), "chain": {"expiration": int(epoch), "calls": [], "puts": []}}
-
-# =============== Математика ===============
+# ====================== Математика (BSM Gamma & профили) ======================
 def bsm_gamma(S, K, sigma, tau, r=DEFAULT_R, q=DEFAULT_Q):
     if tau <= 0 or sigma <= 0 or S <= 0 or K <= 0:
         return 0.0
@@ -166,8 +173,9 @@ def bsm_gamma(S, K, sigma, tau, r=DEFAULT_R, q=DEFAULT_Q):
 
 def compute_chain_gex(chain: dict, quote: dict):
     """
-    DF: ['strike','type','oi','iv','tau','gex_signed']
-    gex_signed: call -> +, put -> -
+    Возвращает DataFrame с колонками:
+      strike, type(call/put), oi, iv, tau, gex_signed
+    где gex_signed = +OI*Γ*100*S для call и -... для put.
     """
     S = quote.get("regularMarketPrice")
     t0 = quote.get("regularMarketTime")
@@ -183,44 +191,49 @@ def compute_chain_gex(chain: dict, quote: dict):
         K   = row.get("strike")
         oi  = row.get("openInterest", 0) or 0
         iv  = row.get("impliedVolatility", 0) or 0
-        mult = 100
         gamma = bsm_gamma(S, K, iv, tau)
-        gex   = oi * gamma * mult * S
+        gex   = oi * gamma * 100 * S
         rows.append({"strike":K, "type":"call", "oi":oi, "iv":iv, "tau":tau, "gex_signed": gex})
     for row in puts:
         K   = row.get("strike")
         oi  = row.get("openInterest", 0) or 0
         iv  = row.get("impliedVolatility", 0) or 0
-        mult = 100
         gamma = bsm_gamma(S, K, iv, tau)
-        gex   = oi * gamma * mult * S
+        gex   = oi * gamma * 100 * S
         rows.append({"strike":K, "type":"put", "oi":oi, "iv":iv, "tau":tau, "gex_signed": -gex})
+
     return pd.DataFrame(rows), S
 
 def weight_scheme(df_all_exp: pd.DataFrame, S: float, h=H_EXP, kappa=KAPPA):
+    """
+    Добавляет веса:
+      W_exp = 2^{-DTE/h}
+      W_liq ≈ sqrt(OI_share)    (по экспирации)
+      W_dist = exp( - [ln(K/S)]^2 / (2 κ^2 (IV√τ)^2) )
+    """
     df = df_all_exp.copy()
     df["DTE"]   = df["tau"] * 365.0
     df["W_exp"] = 2.0 ** (-df["DTE"] / h)
 
-    # Ликвидность по экспирации
+    # ликвидность по экспирации
     oi_by_exp = df.groupby("expiry")["oi"].sum().rename("exp_oi")
     df = df.merge(oi_by_exp, on="expiry", how="left")
     total_oi = float(df["oi"].sum()) or 1.0
     df["OI_share"] = df["exp_oi"] / total_oi
 
-    # Достижимость
+    # достижимость
     sig = df["iv"].clip(lower=1e-6)
     root_tau = np.sqrt(df["tau"].clip(lower=1e-9))
     denom = 2.0 * (kappa**2) * (sig * root_tau)**2
     log_term = np.log(np.maximum(df["strike"], 1e-6) / max(S, 1e-6))
     df["W_dist"] = np.exp(- (log_term**2) / np.maximum(denom, 1e-12))
 
-    # Итог
     return df
 
 def build_profiles(df_w: pd.DataFrame, S: float, smooth_window=SMOOTH_WINDOW):
     raw = df_w.groupby("strike")["gex_signed"].sum().rename("NetGEX_raw").reset_index()
-    df_w["W_prod"] = df_w["W_exp"] * df_w["OI_share"].pow(0.5) * df_w["W_dist"]  # W_liq ~ sqrt(OI_share)
+    df_w["W_liq"] = np.sqrt(df_w["OI_share"].clip(lower=0))
+    df_w["W_prod"] = df_w["W_exp"] * df_w["W_liq"] * df_w["W_dist"]
     df_w["contrib"] = df_w["gex_signed"] * df_w["W_prod"] / S
     magnet = df_w.groupby("strike")["contrib"].sum().rename("Magnet").reset_index()
     prof = raw.merge(magnet, on="strike", how="outer").sort_values("strike")
@@ -232,6 +245,8 @@ def find_levels(profile: pd.DataFrame):
     prof = profile.dropna(subset=["Magnet_smooth"]).copy()
     strikes = prof["strike"].values
     vals = prof["Magnet_smooth"].values
+
+    # нулевая линия (пересечения)
     flips = []
     for i in range(1, len(vals)):
         y0, y1 = vals[i-1], vals[i]
@@ -241,6 +256,8 @@ def find_levels(profile: pd.DataFrame):
             x0, x1 = strikes[i-1], strikes[i]
             x_cross = x0 + (x1 - x0) * (-y0) / (y1 - y0) if (y1 - y0) != 0 else (x0 + x1)/2
             flips.append(x_cross)
+
+    # магниты: локальные экстремумы по |Magnet|
     mags, absvals = [], np.abs(vals)
     for i in range(1, len(vals)-1):
         if absvals[i] >= absvals[i-1] and absvals[i] >= absvals[i+1]:
@@ -266,13 +283,20 @@ def plot_profiles(profile: pd.DataFrame, S: float, flips, pos, neg, title_note="
     fig.update_layout(title=f"Профиль GEX/Magnet {title_note}", xaxis_title="Strike", yaxis_title="Value", height=520)
     return fig
 
-# =============== Основной поток ===============
+# ====================== Основной поток ======================
 if btn_load:
     if not RAPIDAPI_HOST or not RAPIDAPI_KEY:
         st.error("Укажи RapidAPI Host и Key (в сайдбаре или в Secrets).")
         st.stop()
     try:
         raw = fetch_chain_raw(ticker)
+
+        # --- Debug (можно свернуть): поможет, если провайдер отдаёт новый формат
+        with st.expander("Debug: сырой ответ провайдера", expanded=False):
+            if isinstance(raw, dict):
+                st.write("Ключи:", list(raw.keys())[:20])
+            st.json(raw)
+
         shaped = ensure_chain_shape(raw)
         quote = shaped.get("quote", {})
         exp_dates = shaped.get("expirationDates") or [c.get("expiration") for c in shaped["chains"]]
@@ -286,7 +310,7 @@ if btn_load:
                                   format_func=lambda i: human[i], index=0)
 
         if st.button("Рассчитать уровни (эта + 7 следующих)"):
-            picked = exp_dates[picked_idx: picked_idx + 8]
+            picked = exp_dates[picked_idx: picked_idx + 8]  # ближайшая +7
             all_rows, S_ref = [], None
             for e in picked:
                 dat = fetch_specific_expiry(ticker, e)
@@ -295,6 +319,7 @@ if btn_load:
                 all_rows.append(df_i)
                 if S_ref is None and S_i is not None:
                     S_ref = S_i
+
             if not all_rows or S_ref is None:
                 st.error("Недостаточно данных для расчёта.")
                 st.stop()
@@ -314,7 +339,7 @@ if btn_load:
                 return [{"Strike": float(k), "Magnet (взвеш.)": float(v), "Сила |Magnet|": float(a), "Сторона": label}
                         for (k,v,a) in mags]
             levels_df = pd.DataFrame(rows_from_mags(pos, "+") + rows_from_mags(neg, "-")) \
-                           .sort_values("Сила |Magnet|", ascending=False)
+                        .sort_values("Сила |Magnet|", ascending=False)
 
             with col2:
                 st.subheader("Ключевые уровни (магниты)")
@@ -328,7 +353,7 @@ if btn_load:
             checklist = []
             if flips:
                 flip_zone = f"{min(flips):.2f}–{max(flips):.2f}" if len(flips) > 1 else f"{flips[0]:.2f}"
-                checklist.append(f"Нулевая гамма (flip): {flip_zone}. Ниже — mean-revert, выше — breakout.")
+                checklist.append(f"Нулевая гамма (flip): {flip_zone}. Выше — breakout-режим, ниже — mean-revert.")
             if pos:
                 checklist.append("Главные магниты (+): " + ", ".join(str(round(k)) for (k,_,__) in pos[:3]))
             if neg:
@@ -339,4 +364,4 @@ if btn_load:
 
     except Exception as e:
         st.error(str(e))
-        st.info("Если видишь 404/403 — проверь host/ключ. Для твоего провайдера используется /api/v1/markets/options.")
+        st.info("Если видишь 404/403 или пустые даты — проверь Host/Key и содержание блока Debug.")
