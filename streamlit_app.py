@@ -5,6 +5,7 @@ import numpy as np
 import pandas as pd
 import plotly.graph_objects as go
 import streamlit as st
+import io, zipfile
 
 # ========== UI ==========
 st.set_page_config(page_title="GEX Levels & Magnet Profile", layout="wide")
@@ -29,6 +30,7 @@ with st.sidebar:
     with st.expander("Параметры методики", expanded=False):
         H_EXP   = st.slider("h (вес экспирации, дней)", 3.0, 14.0, 7.0, 0.5)
         KAPPA   = st.slider("κ (достижимость)", 0.5, 2.0, 1.0, 0.1)
+        alpha_pct = st.slider("Порог значимости |Net GEX| от max, %", 0.0, 10.0, 2.0, 0.5)
         SMOOTH  = st.select_slider("Сглаживание по страйку (оконный размер)", options=[1,3,5,7], value=3)
 
 # ========== RapidAPI helpers ==========
@@ -343,7 +345,10 @@ if exp_dates:
                     df_i, S_i = compute_chain_gex(dat["chain"], dat["quote"])
                     calls_n = len(dat["chain"].get("calls", []))
                     puts_n  = len(dat["chain"].get("puts",  []))
-                    per_exp_info.append(f"{time.strftime('%Y-%m-%d', time.gmtime(int(e)))}: calls={calls_n}, puts={puts_n}, rows={len(df_i)}")
+                    per_exp_info.append(
+                        f"{time.strftime('%Y-%m-%d', time.gmtime(int(e)))}: "
+                        f"calls={calls_n}, puts={puts_n}, rows={len(df_i)}"
+                    )
                     if j == 1:
                         df_selected = df_i.copy()
                     if not df_i.empty:
@@ -375,7 +380,10 @@ if exp_dates:
 
             c1, c2 = st.columns([2, 1])
             with c1:
-                title = f"({st.session_state.ticker_loaded or ticker}, c {time.strftime('%Y-%m-%d', time.gmtime(int(picked[0])))} по {time.strftime('%Y-%m-%d', time.gmtime(int(picked[-1])))} )"
+                title = (
+                    f"({st.session_state.ticker_loaded or ticker}, c {time.strftime('%Y-%m-%d', time.gmtime(int(picked[0])))} "
+                    f"по {time.strftime('%Y-%m-%d', time.gmtime(int(picked[-1])))} )"
+                )
                 st.plotly_chart(
                     plot_profiles(prof, S=S_ref, flips=flips, pos=pos, neg=neg, title_note=title),
                     use_container_width=True
@@ -447,12 +455,13 @@ if exp_dates:
                 abs_y = np.abs(y)
                 if abs_y.size:
                     max_abs = float(abs_y.max())
-                    alpha = 0.02
+                    alpha = float(alpha_pct) / 100.0
                     sig = abs_y >= (alpha * max_abs)
                     if sig.any():
                         idxs = np.where(sig)[0]
                         i0, i1 = max(0, int(idxs.min())-3), min(len(x)-1, int(idxs.max())+3)
                         x, y, custom = x[i0:i1+1], y[i0:i1+1], custom[i0:i1+1]
+                        x_labels = x_labels[i0:i1+1]
 
                 pos_mask = (y >= 0)
                 neg_mask = ~pos_mask
@@ -493,11 +502,57 @@ if exp_dates:
                     yaxis_title="Net GEX",
                     dragmode=False,
                 )
+                fig.update_xaxes(tickmode="array", tickvals=x, ticktext=x_labels, tickangle=0)
                 fig.update_xaxes(fixedrange=True)
                 if ymax > 0:
                     fig.update_yaxes(range=[-1.2*ymax, 1.2*ymax])
+                x_labels = merged["strike"].round(0).astype(int).astype(str).to_numpy()
                 fig.update_yaxes(fixedrange=True, tickformat=",")
                 st.plotly_chart(fig, use_container_width=True, config={"displayModeBar": False, "scrollZoom": False})
+
+                # --- Debug bundle download ---
+                buf = io.BytesIO()
+                with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as zf:
+                    if st.session_state.get("raw_listing"):
+                        zf.writestr("raw_listing.json", json.dumps(st.session_state.raw_listing, ensure_ascii=False, indent=2))
+                    if S_ref is not None:
+                        zf.writestr("quote.json", json.dumps({"regularMarketPrice": float(S_ref)}, ensure_ascii=False, indent=2))
+                    try:
+                        zf.writestr("netgex_by_strike.csv", gex_table.to_csv(index=False))
+                    except Exception:
+                        pass
+                    try:
+                        zf.writestr("magnet_levels.csv", levels.to_csv(index=False))
+                    except Exception:
+                        pass
+                st.download_button(
+                    "Скачать debug.zip",
+                    data=buf.getvalue(),
+                    file_name=f"{st.session_state.ticker_loaded or ticker}_debug.zip",
+                    mime="application/zip"
+                )
+
+                # --- Debug bundle download ---
+                buf = io.BytesIO()
+                with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as zf:
+                    if st.session_state.get("raw_listing"):
+                        zf.writestr("raw_listing.json", json.dumps(st.session_state.raw_listing, ensure_ascii=False, indent=2))
+                    if S_ref is not None:
+                        zf.writestr("quote.json", json.dumps({"regularMarketPrice": float(S_ref)}, ensure_ascii=False, indent=2))
+                    try:
+                        zf.writestr("netgex_by_strike.csv", gex_table.to_csv(index=False))
+                    except Exception:
+                        pass
+                    try:
+                        zf.writestr("magnet_levels.csv", levels.to_csv(index=False))
+                    except Exception:
+                        pass
+                st.download_button(
+                    "Скачать debug.zip",
+                    data=buf.getvalue(),
+                    file_name=f"{st.session_state.ticker_loaded or ticker}_debug.zip",
+                    mime="application/zip"
+                )
 
         except Exception as e:
             st.error(f"Ошибка расчёта уровней: {e}")
