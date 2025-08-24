@@ -474,7 +474,7 @@ if exp_dates:
                     ))
 
                 spot_x = float(S_ref)
-                fig.add_vline(x=spot_x, line_width=2, line_dash="solid", line_color="#FFA500")
+                                # --- Доп. оверлеи: OI & Volume ---\n                call_oi = merged["Call_OI"].to_numpy() if "Call_OI" in merged.columns else None\n                put_oi  = merged["Put_OI"].to_numpy()  if "Put_OI" in merged.columns else None\n                call_vol= merged["Call_Volume"].to_numpy() if "Call_Volume" in merged.columns else None\n                put_vol = merged["Put_Volume"].to_numpy() if "Put_Volume" in merged.columns else None\n\n                if call_oi is not None:\n                    fig.add_trace(go.Scatter(x=x, y=call_oi, yaxis="y2", name="Call OI",\n                                             mode="lines", line=dict(width=2, color="#1ABC9C")))\n                if put_oi is not None:\n                    fig.add_trace(go.Scatter(x=x, y=put_oi, yaxis="y2", name="Put OI",\n                                             mode="lines", line=dict(width=2, color="#F39C12")))\n                if call_vol is not None:\n                    fig.add_trace(go.Scatter(x=x, y=call_vol, yaxis="y2", name="Call Volume",\n                                             mode="lines", line=dict(width=1, dash="dot", color="#95A5A6")))\n                if put_vol is not None:\n                    fig.add_trace(go.Scatter(x=x, y=put_vol, yaxis="y2", name="Put Volume",\n                                             mode="lines", line=dict(width=1, dash="dot", color="#E91E63")))\n\nfig.add_vline(x=spot_x, line_width=2, line_dash="solid", line_color="#FFA500")
                 xmin, xmax = float(np.min(x)), float(np.max(x))
                 mid = 0.5*(xmin + xmax)
                 _xanchor, _xshift = ('left', 8) if spot_x <= mid else ('right', -8)
@@ -483,7 +483,14 @@ if exp_dates:
                                    text=f"Price: {spot_x:.2f}", font=dict(color="#FFA500"))
 
                 ymax = float(np.abs(y).max()) if y.size else 0.0
-                y2max = float(np.max(ag)) if ag.size else 0.0
+                y2_candidates = []
+                if ag.size:
+                    y2_candidates.append(ag)
+                for _col in ["Call_OI", "Put_OI", "Call_Volume", "Put_Volume"]:
+                    _arr = merged[_col].to_numpy() if _col in merged.columns else None
+                    if _arr is not None and _arr.size:
+                        y2_candidates.append(_arr)
+                y2max = float(np.max([np.max(a) for a in y2_candidates])) if y2_candidates else 0.0
 
                 fig.update_layout(
                     barmode="relative",
@@ -494,7 +501,7 @@ if exp_dates:
                     yaxis_title="Net GEX",
                     dragmode=False,
                     yaxis2=dict(
-                        title="AG",
+                        title="AG / OI / Volume",
                         overlaying="y",
                         side="right",
                         showgrid=False,
@@ -506,7 +513,7 @@ if exp_dates:
                 if ymax > 0:
                     fig.update_yaxes(range=[-1.2*ymax, 1.2*ymax])
                 if y2max > 0:
-                    fig.update_layout(yaxis2=dict(range=[0, 1.2*y2max], title="AG", overlaying="y", side="right", showgrid=False, tickformat=","))
+                    fig.update_layout(yaxis2=dict(range=[0, 1.2*y2max], title="AG / OI / Volume", overlaying="y", side="right", showgrid=False, tickformat=","))
 
                 fig.update_yaxes(fixedrange=True, tickformat=",")
                 st.plotly_chart(fig, use_container_width=True, config={"displayModeBar": False, "scrollZoom": False})
