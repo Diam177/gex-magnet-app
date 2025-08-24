@@ -13,6 +13,7 @@ st.title("GEX Levels & Magnet Profile (по комбинированной ме�
 SECONDS_PER_YEAR = 31557600.0
 DEFAULT_R = 0.01
 DEFAULT_Q = 0.00
+FIG_HEIGHT = 675  # высота основного графика
 TOP_N_LEVELS = 5
 
 host_default = st.secrets.get("RAPIDAPI_HOST", "")
