@@ -248,23 +248,14 @@ def find_levels(profile: pd.DataFrame):
 
 def plot_profiles(profile: pd.DataFrame, S: float, flips, pos, neg, title_note=""):
     prof = profile.copy()
-    
-# ---- Панель кнопок над графиком ----
-st.markdown("### Управление отображением")
-
-selected_traces = st.multiselect(
-    "Выберите, что показывать:",
-    ["Net GEX +", "Net GEX -", "AG", "Call OI", "Put OI", "Call Volume", "Put Volume", "MAX Power"],
-    default=["Net GEX +", "Net GEX -", "AG"]
-)
-fig = go.Figure()
+    fig = go.Figure()
     fig.add_trace(go.Scatter(x=prof["strike"], y=prof["Magnet_smooth"], name="Magnet", mode="lines"))
     fig.add_trace(go.Scatter(x=prof["strike"], y=prof["NetGEX_smooth"], name="Net GEX (сглаж.)", mode="lines"))
     for f in flips or []:
         fig.add_vline(x=float(f), line_width=1, line_dash="dot", line_color="#888")
     fig.add_vline(x=float(S), line_width=2, line_dash="solid", line_color="#FFA500")
     fig.update_layout(
-        title=title_note, showlegend=True,
+        title=title_note, height=FIG_HEIGHT, showlegend=True,
         margin=dict(l=40,r=20,t=30,b=40),
         xaxis_title="Strike", yaxis_title="Value",
         dragmode=False
@@ -436,32 +427,45 @@ if exp_dates:
 
                 pos_mask = (y >= 0)
                 neg_mask = ~pos_mask
-
+                
+                # ---- Панель кнопок над графиком ----
+                st.markdown("### Управление отображением")
+                selected_traces = st.multiselect(
+                    "Выберите, что показывать:",
+                    ["Net GEX +", "Net GEX -", "AG", "Call OI", "Put OI", "Call Volume", "Put Volume", "MAX Power"],
+                    default=["Net GEX +", "Net GEX -", "AG"]
+                )
+                
                 fig = go.Figure()
                 if "Net GEX +" in selected_traces:
-        fig.add_bar(x=x[pos_mask], y=y[pos_mask], name="Net GEX +", customdata=custom[pos_mask], marker_color="#33B5FF",
-                    hovertemplate=(
-                        "Strike: %{customdata[0]:.0f}<br>"
-                        "Call OI: %{customdata[1]:,.0f}<br>"
-                        "Put OI: %{customdata[2]:,.0f}<br>"
-                        "Call Volume: %{customdata[3]:,.0f}<br>"
-                        "Put Volume: %{customdata[4]:,.0f}<br>"
-                        "Net GEX: %{customdata[5]:,.1f}<extra></extra>"
+                    fig.add_bar(
+                        x=x[pos_mask], y=y[pos_mask], name="Net GEX +", customdata=custom[pos_mask],
+                        marker_color="#33B5FF",
+                        hovertemplate=(
+                            "Strike: %{customdata[0]:.0f}<br>"
+                            "Call OI: %{customdata[1]:,.0f}<br>"
+                            "Put OI: %{customdata[2]:,.0f}<br>"
+                            "Call Volume: %{customdata[3]:,.0f}<br>"
+                            "Put Volume: %{customdata[4]:,.0f}<br>"
+                            "Net GEX: %{customdata[5]:,.1f}<extra></extra>"
+                        )
                     )
-                )
                 if "Net GEX -" in selected_traces:
-        fig.add_bar(x=x[neg_mask], y=y[neg_mask], name="Net GEX -", customdata=custom[neg_mask], marker_color="#FF3B30",
-                    hovertemplate=(
-                        "Strike: %{customdata[0]:.0f}<br>"
-                        "Call OI: %{customdata[1]:,.0f}<br>"
-                        "Put OI: %{customdata[2]:,.0f}<br>"
-                        "Call Volume: %{customdata[3]:,.0f}<br>"
-                        "Put Volume: %{customdata[4]:,.0f}<br>"
-                        "Net GEX: %{customdata[5]:,.1f}<extra></extra>"
+                    fig.add_bar(
+                        x=x[neg_mask], y=y[neg_mask], name="Net GEX -", customdata=custom[neg_mask],
+                        marker_color="#FF3B30",
+                        hovertemplate=(
+                            "Strike: %{customdata[0]:.0f}<br>"
+                            "Call OI: %{customdata[1]:,.0f}<br>"
+                            "Put OI: %{customdata[2]:,.0f}<br>"
+                            "Call Volume: %{customdata[3]:,.0f}<br>"
+                            "Put Volume: %{customdata[4]:,.0f}<br>"
+                            "Net GEX: %{customdata[5]:,.1f}<extra></extra>"
+                        )
                     )
-                )
-
-                if show_ag and ag.size:
+                
+                # Добавляем AG при выборе и включенном переключателе show_ag
+                if ("AG" in selected_traces) and show_ag and ag.size:
                     fig.add_trace(go.Scatter(
                         x=x, y=ag, yaxis="y2", name="AG",
                         mode="lines+markers",
@@ -475,50 +479,42 @@ if exp_dates:
                             "Put OI: %{customdata[2]:,.0f}<br>"
                             "Call Volume: %{customdata[3]:,.0f}<br>"
                             "Put Volume: %{customdata[4]:,.0f}<br>"
-                            "AG: %{customdata[6]:,.1f}<extra></extra>"
-                        ),
-                        customdata=custom
+                            "AG: %{y:,.1f}<extra></extra>"
+                        )
                     ))
-
-                spot_x = float(S_ref)
-                fig.add_vline(x=spot_x, line_width=2, line_dash="solid", line_color="#FFA500")
-                xmin, xmax = float(np.min(x)), float(np.max(x))
-                mid = 0.5*(xmin + xmax)
-                _xanchor, _xshift = ('left', 8) if spot_x <= mid else ('right', -8)
-                fig.add_annotation(x=spot_x, y=1.02, xref="x", yref="paper", showarrow=False,
-                                   xanchor=_xanchor, xshift=_xshift,
-                                   text=f"Price: {spot_x:.2f}", font=dict(color="#FFA500"))
-
+                
+                # Линия текущей цены
+                fig.add_vline(x=float(S_ref), line_width=2, line_dash="solid", line_color="#FFA500")
+                fig.add_annotation(x=float(S_ref), y=0, xref="x", yref="y",
+                    text=f"S={S_ref:.2f}", showarrow=False, xanchor="left",
+                    yanchor="bottom", font=dict(color="#FFA500"))
+                
                 ymax = float(np.abs(y).max()) if y.size else 0.0
                 y2max = float(np.max(ag)) if ag.size else 0.0
-
-                fig.update_layout(
-                    barmode="relative",
+                
+                fig.update_layout(barmode="relative", height=FIG_HEIGHT,
                     showlegend=True,
                     legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1),
                     margin=dict(l=40, r=40, t=40, b=40),
                     xaxis_title="Strike",
                     yaxis_title="Net GEX",
                     dragmode=False,
-                    yaxis2=dict(
-                        title="AG",
-                        overlaying="y",
-                        side="right",
-                        showgrid=False,
-                        tickformat=","
-                    ),
                 )
+                # ось справа — только если AG показан
+                if ("AG" in selected_traces) and show_ag and (y2max > 0):
+                    fig.update_layout(yaxis2=dict(title="AG", overlaying="y", side="right", showgrid=False, tickformat=","))
+                
+                # Подписи страйков
                 fig.update_xaxes(tickmode="array", tickvals=tickvals, ticktext=ticktext, tickangle=0)
                 fig.update_xaxes(fixedrange=True)
-                # динамический диапазон Y с учётом min/max и отступа
-                ymin = float(y.min()) if y.size else 0.0
-                ymax = float(y.max()) if y.size else 0.0
+                
+                # Диапазон Y: min/max + отступ
+                ymin_dyn = float(y.min()) if y.size else 0.0
+                ymax_dyn = float(y.max()) if y.size else 0.0
                 if y.size:
-                    pad = 0.1 * (ymax - ymin) if ymax > ymin else abs(ymax)*0.1
-                    fig.update_yaxes(range=[ymin - pad, ymax + pad])
-                if y2max > 0:
-                    fig.update_layout(yaxis2=dict(range=[0, 1.2*y2max], title="AG", overlaying="y", side="right", showgrid=False, tickformat=","))
-
+                    pad = 0.1 * (ymax_dyn - ymin_dyn) if ymax_dyn > ymin_dyn else abs(ymax_dyn) * 0.1
+                    fig.update_yaxes(range=[ymin_dyn - pad, ymax_dyn + pad])
+                
                 fig.update_yaxes(fixedrange=True, tickformat=",")
                 st.plotly_chart(fig, use_container_width=True, config={"displayModeBar": False, "scrollZoom": False})
 
