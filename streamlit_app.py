@@ -13,6 +13,7 @@ st.title("GEX Levels & Magnet Profile (по комбинированной ме�
 SECONDS_PER_YEAR = 31557600.0
 DEFAULT_R = 0.01
 DEFAULT_Q = 0.00
+FIG_HEIGHT = 675  # увеличенная высота графиков (+50%)
 TOP_N_LEVELS = 5
 
 host_default = st.secrets.get("RAPIDAPI_HOST", "")
@@ -254,8 +255,7 @@ def plot_profiles(profile: pd.DataFrame, S: float, flips, pos, neg, title_note="
     for f in flips or []:
         fig.add_vline(x=float(f), line_width=1, line_dash="dot", line_color="#888")
     fig.add_vline(x=float(S), line_width=2, line_dash="solid", line_color="#FFA500")
-    fig.update_layout(
-        title=title_note, showlegend=True,
+    fig.update_layout(title=title_note, height=FIG_HEIGHT, showlegend=True,
         margin=dict(l=40,r=20,t=30,b=40),
         xaxis_title="Strike", yaxis_title="Value",
         dragmode=False
@@ -485,8 +485,7 @@ if exp_dates:
                 ymax = float(np.abs(y).max()) if y.size else 0.0
                 y2max = float(np.max(ag)) if ag.size else 0.0
 
-                fig.update_layout(
-                    barmode="relative",
+                fig.update_layout(barmode="relative", height=FIG_HEIGHT,
                     showlegend=True,
                     legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1),
                     margin=dict(l=40, r=40, t=40, b=40),
