@@ -31,6 +31,15 @@ with st.sidebar:
         KAPPA   = st.slider("κ (достижимость)", 0.5, 2.0, 1.0, 0.1)
         SMOOTH  = st.select_slider("Сглаживание по страйку (оконный размер)", options=[1,3,5,7], value=3)
 
+
+# === Session state init for stable UI across reruns ===
+if "exp_dates" not in st.session_state:
+    st.session_state.exp_dates = []
+    st.session_state.raw_listing = None
+    st.session_state.ticker_loaded = None
+    st.session_state.exp_idx = 0  # selected expiry index
+
+
 # ========== RapidAPI helpers ==========
 def api_headers():
     return {"X-RapidAPI-Key": RAPIDAPI_KEY, "X-RapidAPI-Host": RAPIDAPI_HOST}
@@ -304,39 +313,66 @@ if btn_load:
             st.error("Не удалось получить список экспираций (пустой ответ).")
             st.stop()
 
-        human = [time.strftime("%Y-%m-%d", time.gmtime(e)) for e in exp_dates]
-        idx = st.selectbox("Выбери ближайшую экспирацию", list(range(len(exp_dates))),
-                           format_func=lambda i: human[i], index=0)
 
-        if st.button("Рассчитать уровни (эта + 7 следующих)"):
-            picked = exp_dates[idx : idx+8]
+# Save to session state and show instruction
+st.session_state.raw_listing = raw
+st.session_state.exp_dates = exp_dates
+st.session_state.ticker_loaded = ticker
+st.session_state.exp_idx = 0
+st.success(f"Экспирации загружены для {ticker} — выбери дату слева и нажми «Рассчитать уровни…».")
+
+
+
+    except Exception as e:
+        st.error(f"Ошибка: {e}")
+        st.info("Открой «Debug: сырой ответ провайдера» и скачай JSON — пришли мне файл, если ошибка повторится.")
+
+
+# === Standalone selection and calculation section (visible whenever expiries are loaded) ===
+exp_dates = st.session_state.get("exp_dates", [])
+if exp_dates:
+    try:
+        human = [time.strftime("%Y-%m-%d", time.gmtime(int(e))) for e in exp_dates]
+    except Exception:
+        human = [str(e) for e in exp_dates]
+    st.session_state.exp_idx = st.selectbox(
+        "Выбери ближайшую экспирацию",
+        list(range(len(exp_dates))),
+        format_func=lambda i: human[i],
+        index=st.session_state.get("exp_idx", 0),
+        key="exp_select_box"
+    )
+
+    if st.button("Рассчитать уровни (эта + 7 следующих)", key="calc_levels_btn"):
+        try:
+            idx = st.session_state.exp_idx
+            picked = exp_dates[idx: idx + 8]
             log_box = st.empty()
-            progress = st.progress(0)
+            progress = st.progress(0.0)
             all_rows, S_ref = [], None
             per_exp_info = []
 
             with st.spinner("Тянем цепочки и считаем Гамму..."):
                 for j, e in enumerate(picked, start=1):
-                    dat = fetch_expiry(ticker, int(e))
+                    dat = fetch_expiry(st.session_state.ticker_loaded or ticker, int(e))
                     df_i, S_i = compute_chain_gex(dat["chain"], dat["quote"])
                     calls_n = len(dat["chain"].get("calls", []))
                     puts_n  = len(dat["chain"].get("puts",  []))
-                    per_exp_info.append(f"{time.strftime('%Y-%m-%d', time.gmtime(e))}: calls={calls_n}, puts={puts_n}, rows={len(df_i)}")
+                    per_exp_info.append(f"{time.strftime('%Y-%m-%d', time.gmtime(int(e)))}: calls={calls_n}, puts={puts_n}, rows={len(df_i)}")
                     if not df_i.empty:
                         df_i["expiry"] = int(e)
                         all_rows.append(df_i)
                         if S_ref is None and S_i is not None:
                             S_ref = S_i
-                    progress.progress(j/len(picked))
+                    progress.progress(j / max(1, len(picked)))
                     log_box.write("\n".join(per_exp_info))
 
             if not all_rows:
-                st.warning("По выбранному окну экспираций цепочки пустые (нет строк для расчёта). "
-                           "Попробуй другую дату или тикер.")
+                st.warning("По выбранному окну экспираций цепочки пустые (нет строк для расчёта). Попробуй другую дату или тикер.")
                 st.stop()
 
             if S_ref is None:
-                q = fetch_quote(ticker)
+                q = fetch_quote(st.session_state.ticker_loaded or ticker)
                 S_ref = q.get("regularMarketPrice")
             if S_ref is None:
                 st.error("Не удалось определить Spot (regularMarketPrice).")
@@ -350,24 +386,26 @@ if btn_load:
 
             flips, pos, neg = find_levels(prof)
 
-            c1, c2 = st.columns([2,1])
+            c1, c2 = st.columns([2, 1])
             with c1:
-                title = f"({ticker}, c {time.strftime('%Y-%m-%d', time.gmtime(picked[0]))} по {time.strftime('%Y-%m-%d', time.gmtime(picked[-1]))})"
-                st.plotly_chart(plot_profiles(prof, S=S_ref, flips=flips, pos=pos, neg=neg, title_note=title),
-                                use_container_width=True)
+                title = f"({st.session_state.ticker_loaded or ticker}, c {time.strftime('%Y-%m-%d', time.gmtime(int(picked[0])))} по {time.strftime('%Y-%m-%d', time.gmtime(int(picked[-1])))} )"
+                st.plotly_chart(
+                    plot_profiles(prof, S=S_ref, flips=flips, pos=pos, neg=neg, title_note=title),
+                    use_container_width=True
+                )
 
             def rows(mags, label):
-                return [{"Strike": k, "Magnet": v, "|Magnet|": a, "Side": label} for (k,v,a) in mags]
+                return [{"Strike": k, "Magnet": v, "|Magnet|": a, "Side": label} for (k, v, a) in mags]
             levels = pd.DataFrame(rows(pos, "+") + rows(neg, "-")).sort_values("|Magnet|", ascending=False)
 
             with c2:
                 st.subheader("Ключевые уровни (магниты)")
                 st.dataframe(levels, use_container_width=True)
-                st.download_button("Скачать уровни (CSV)",
-                                   data=levels.to_csv(index=False).encode("utf-8"),
-                                   file_name=f"{ticker}_magnet_levels.csv",
-                                   mime="text/csv")
-
-    except Exception as e:
-        st.error(f"Ошибка: {e}")
-        st.info("Открой «Debug: сырой ответ провайдера» и скачай JSON — пришли мне файл, если ошибка повторится.")
+                st.download_button(
+                    "Скачать уровни (CSV)",
+                    data=levels.to_csv(index=False).encode("utf-8"),
+                    file_name=f"{st.session_state.ticker_loaded or ticker}_magnet_levels.csv",
+                    mime="text/csv"
+                )
+        except Exception as e:
+            st.error(f"Ошибка расчёта уровней: {e}")
