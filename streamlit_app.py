@@ -297,17 +297,16 @@ if btn_load:
 
         shaped = ensure_shape(raw)
         exp_dates = shaped.get("expirationDates")
-if not exp_dates:
-    st.error("Не удалось получить список экспираций (пустой ответ).")
-    st.stop()
-# сохраним всё нужное для последующих запусков
-st.session_state.raw_listing = raw
-st.session_state.exp_dates = exp_dates
-st.session_state.ticker_loaded = ticker
-st.session_state.exp_idx = 0
-st.success(f"Экспирации загружены для {ticker} — выбери дату ниже и нажми «Рассчитать уровни…».")
-
-        # fallback: если expirationDates нет, пробуем взять из chains
+        if not exp_dates:
+            st.error("Не удалось получить список экспираций (пустой ответ).")
+            st.stop()
+        # сохраним всё нужное для последующих запусков
+        st.session_state.raw_listing = raw
+        st.session_state.exp_dates = exp_dates
+        st.session_state.ticker_loaded = ticker
+        st.session_state.exp_idx = 0
+        st.success(f"Экспирации загружены для {ticker} — выбери дату ниже и нажми «Рассчитать уровни…».")
+                # fallback: если expirationDates нет, пробуем взять из chains
         if not exp_dates:
             exp_dates = sorted({ ch.get("expiration") for ch in shaped.get("chains", []) if ch.get("expiration") })
         if not exp_dates:
@@ -504,6 +503,7 @@ st.success(f"Экспирации загружены для {ticker} — выб�
         st.error(f"Ошибка: {e}")
         st.info("Открой «Debug: сырой ответ провайдера» и скачай JSON — пришли мне файл, если ошибка повторится.")
 
+
 # === Standalone selection and calculation section ===
 exp_dates = st.session_state.get("exp_dates", [])
 if exp_dates:
@@ -537,7 +537,7 @@ if exp_dates:
                         if S_ref is None and S_i is not None:
                             S_ref = S_i
                     progress.progress(j / max(1, len(picked)))
-                    log_box.write("\\n".join(per_exp_info))
+                    log_box.write("\n".join(per_exp_info))
 
             if not all_rows:
                 st.warning("По выбранному окну экспираций цепочки пустые (нет строк для расчёта). Попробуй другую дату или тикер.")
@@ -613,7 +613,7 @@ if exp_dates:
                             g[col] = 0.0
 
                 bar_df = grp_gex.rename(columns={"call":"GEX_call","put":"GEX_put"})
-                bar_df["Net_GEX"] = bar_df["GEX_call"] + bar_df["GEX_put"]
+                bar_df["Net_GEX"] = bar_df["GEX_CALL"] + bar_df["GEX_PUT"] if "GEX_CALL" in bar_df.columns else bar_df["GEX_call"] + bar_df["GEX_put"]
                 oi_df  = grp_oi.rename(columns={"call":"Call_OI","put":"Put_OI"})
                 vol_df = grp_vol.rename(columns={"call":"Call_Volume","put":"Put_Volume"})
                 merged = bar_df.join(oi_df).join(vol_df).reset_index().sort_values("strike")
@@ -688,4 +688,5 @@ if exp_dates:
             st.error(f"Ошибка расчёта уровней: {e}")
 else:
     st.info("Чтобы начать, введите тикер и нажмите «Загрузить экспирации».")
+st.info("Чтобы начать, введите тикер и нажмите «Загрузить экспирации».")
 
