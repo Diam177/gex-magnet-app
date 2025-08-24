@@ -52,21 +52,21 @@ with st.sidebar:
     btn_load = st.button("Загрузить экспирации")
     with st.expander("Параметры методики", expanded=False):
 
-    # ---- Отображение ----
-    st.markdown("**Отображение**")
-    col_vis1, col_vis2, col_vis3 = st.columns(3)
-    with col_vis1:
-        show_call_oi = st.checkbox("Call OI", value=False)
-        show_put_oi  = st.checkbox("Put OI", value=False)
-    with col_vis2:
-        show_call_vol = st.checkbox("Call Volume", value=False)
-        show_put_vol  = st.checkbox("Put Volume", value=False)
-    with col_vis3:
-        right_axis_mode = "Auto"
-        H_EXP   = st.slider("h (вес экспирации, дней)", 3.0, 14.0, 7.0, 0.5)
-        KAPPA   = st.slider("κ (достижимость)", 0.5, 2.0, 1.0, 0.1)
-        SMOOTH  = st.select_slider("Сглаживание по страйку (оконный размер)", options=[1,3,5,7], value=3)
-        ALPHA_PCT = st.slider("Порог значимости |Net GEX| от max, %", 0.0, 10.0, 2.0, 0.5)
+            # ---- Отображение ----
+            st.markdown("**Отображение**")
+            col_vis1, col_vis2, col_vis3 = st.columns(3)
+            with col_vis1:
+                show_call_oi = st.checkbox("Call OI", value=False)
+                show_put_oi  = st.checkbox("Put OI", value=False)
+            with col_vis2:
+                show_call_vol = st.checkbox("Call Volume", value=False)
+                show_put_vol  = st.checkbox("Put Volume", value=False)
+            with col_vis3:
+                right_axis_mode = "Auto"
+                H_EXP   = st.slider("h (вес экспирации, дней)", 3.0, 14.0, 7.0, 0.5)
+                KAPPA   = st.slider("κ (достижимость)", 0.5, 2.0, 1.0, 0.1)
+                SMOOTH  = st.select_slider("Сглаживание по страйку (оконный размер)", options=[1,3,5,7], value=3)
+                ALPHA_PCT = st.slider("Порог значимости |Net GEX| от max, %", 0.0, 10.0, 2.0, 0.5)
 
 # ========== RapidAPI helpers ==========
 def api_headers():
