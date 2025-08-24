@@ -497,7 +497,19 @@ if exp_dates:
                         customdata=custom
                     ))
 
-                # --- Доп. оверлеи: OI & Volume на правой оси ---
+                # масштабы осей перед оверлеями
+                ymax = float(np.abs(y).max()) if y.size else 0.0
+                y2_candidates = []
+                if ag.size:
+                    y2_candidates.append(ag)
+                for _col in ["Call_OI", "Put_OI", "Call_Volume", "Put_Volume"]:
+                    if _col in merged.columns:
+                        _arr = merged[_col].to_numpy()
+                        if _arr.size:
+                            y2_candidates.append(_arr)
+                y2max = float(np.max([np.max(a) for a in y2_candidates])) if y2_candidates else 0.0
+
+                # Оверлеи по правой оси: OI & Volume
                 call_oi  = merged["Call_OI"].to_numpy()     if "Call_OI"     in merged.columns else None
                 put_oi   = merged["Put_OI"].to_numpy()      if "Put_OI"      in merged.columns else None
                 call_vol = merged["Call_Volume"].to_numpy() if "Call_Volume" in merged.columns else None
@@ -522,6 +534,10 @@ if exp_dates:
                         x=x, y=_scale_to_y2(put_vol, y2max), yaxis="y2", name="Put Volume",
                         mode="lines", line=dict(width=1, dash="dot", color="#E91E63")
                     ))
+
+
+                
+                # масштабы осей перед оверлеями
 
                 spot_x = float(S_ref)
                 fig.add_vline(x=spot_x, line_width=2, line_dash="solid", line_color="#FFA500")
