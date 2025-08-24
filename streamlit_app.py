@@ -430,31 +430,29 @@ if exp_dates:
                 neg_mask = ~pos_mask
                 
                 
-                # ---- Панель кнопок (статичные) ----
+                # ---- Панель кнопок (интерактивные) ----
                 st.markdown("### Выберите параметры:")
-                
-                st.markdown(
-                    """
-                    <div style="display:flex; gap:12px; flex-wrap:wrap; background:#1f1f1f; padding:14px 16px; border-radius:12px;">
-                      <div style="background:#1DA1F2; color:white; padding:8px 16px; border-radius:10px; font-weight:600;">Net GEX +</div>
-                      <div style="background:#F23645; color:white; padding:8px 16px; border-radius:10px; font-weight:600;">Net GEX -</div>
-                      <div style="background:#9B59B6; color:white; padding:8px 16px; border-radius:10px; font-weight:600;">AG</div>
-                      <div style="background:#2ECC71; color:white; padding:8px 16px; border-radius:10px; font-weight:600;">Call OI</div>
-                      <div style="background:#E74C3C; color:white; padding:8px 16px; border-radius:10px; font-weight:600;">Put OI</div>
-                      <div style="background:#1976D2; color:white; padding:8px 16px; border-radius:10px; font-weight:600;">Call Volume</div>
-                      <div style="background:#E67E22; color:white; padding:8px 16px; border-radius:10px; font-weight:600;">Put Volume</div>
-                      <div style="background:#F1C40F; color:#111; padding:8px 16px; border-radius:10px; font-weight:700;">MAX Power</div>
-                    </div>
-                    """ ,
-                    unsafe_allow_html=True
-                )
-                
-                # статический набор для совместимости с остальным кодом (кнопки не интерактивны)
-                selected_traces = ["Net GEX +", "Net GEX -", "AG"]
+                cols = st.columns(8)
+                with cols[0]:
+                    show_pos = st.toggle("Net GEX +", value=True)
+                with cols[1]:
+                    show_neg = st.toggle("Net GEX -", value=True)
+                with cols[2]:
+                    show_ag = st.toggle("AG", value=True)
+                with cols[3]:
+                    st.button("Call OI", disabled=True)
+                with cols[4]:
+                    st.button("Put OI", disabled=True)
+                with cols[5]:
+                    st.button("Call Volume", disabled=True)
+                with cols[6]:
+                    st.button("Put Volume", disabled=True)
+                with cols[7]:
+                    st.button("MAX Power", disabled=True)
                 
                 fig = go.Figure()
 
-                if "Net GEX +" in selected_traces:
+                if show_pos:
                     fig.add_bar(
                         x=x[pos_mask], y=y[pos_mask], name="Net GEX +", customdata=custom[pos_mask],
                         marker_color="#33B5FF",
@@ -467,7 +465,7 @@ if exp_dates:
                             "Net GEX: %{customdata[5]:,.1f}<extra></extra>"
                         )
                     )
-                if "Net GEX -" in selected_traces:
+                if show_neg:
                     fig.add_bar(
                         x=x[neg_mask], y=y[neg_mask], name="Net GEX -", customdata=custom[neg_mask],
                         marker_color="#FF3B30",
@@ -482,16 +480,18 @@ if exp_dates:
                     )
                 
                 # Добавляем AG при выборе и включенном переключателе show_ag
-                if ("AG" in selected_traces) and show_ag and ag.size:
+                if show_ag and ag.size:
                     fig.add_trace(go.Scatter(
                         x=x, y=ag, yaxis="y2", name="AG",
+        customdata=custom,
                         mode="lines+markers",
                         line=dict(color="#B366FF"),
                         fill="tozeroy",
                         fillcolor="rgba(179,102,255,0.25)",
                         line_shape="spline",
+        cliponaxis=True,
                         hovertemplate=(
-                            "Strike: %{customdata[0]:.1f}<br>"
+                            "Strike: %{x:.1f}<br>"
                             "Call OI: %{customdata[1]:,.0f}<br>"
                             "Put OI: %{customdata[2]:,.0f}<br>"
                             "Call Volume: %{customdata[3]:,.0f}<br>"
@@ -502,8 +502,8 @@ if exp_dates:
                 
                 # Линия текущей цены
                 fig.add_vline(x=float(S_ref), line_width=2, line_dash="solid", line_color="#FFA500")
-                fig.add_annotation(x=float(S_ref), y=0, xref="x", yref="y",
-                    text=f"S={S_ref:.2f}", showarrow=False, xanchor="left",
+                fig.add_annotation(x=float(S_ref), y=1.02, xref="x", yref="paper",
+                    text=f"Price: {S_ref:.2f}", showarrow=False, xanchor="center",
                     yanchor="bottom", font=dict(color="#FFA500"))
                 
                 ymax = float(np.abs(y).max()) if y.size else 0.0
@@ -518,8 +518,11 @@ if exp_dates:
                     dragmode=False,
                 )
                 # ось справа — только если AG показан
-                if ("AG" in selected_traces) and show_ag and (y2max > 0):
-                    fig.update_layout(yaxis2=dict(title="AG", overlaying="y", side="right", showgrid=False, tickformat=","))
+                if show_ag and (y2max > 0):
+                    y2min = float(np.min(ag)) if ag.size else 0.0
+                    y2max = float(np.max(ag)) if ag.size else 0.0
+                    pad2 = 0.1 * (y2max - y2min) if y2max > y2min else abs(y2max) * 0.1
+                    fig.update_layout(yaxis2=dict(title="AG", overlaying="y", side="right", showgrid=False, tickformat=",", range=[y2min - pad2, y2max + pad2], fixedrange=True))
                 
                 # Подписи страйков
                 fig.update_xaxes(tickmode="array", tickvals=tickvals, ticktext=ticktext, tickangle=0)
