@@ -454,6 +454,7 @@ if exp_dates:
                     )
                 )
 
+                # --- Оверлеи: AG (если включена), затем OI/Volume и вертикальная линия цены ---
                 if show_ag and ag.size:
                     fig.add_trace(go.Scatter(
                         x=x, y=ag, yaxis="y2", name="AG",
@@ -473,15 +474,35 @@ if exp_dates:
                         customdata=custom
                     ))
 
-                spot_x = float(S_ref)
-                                # --- Доп. оверлеи: OI & Volume ---\n                call_oi = merged["Call_OI"].to_numpy() if "Call_OI" in merged.columns else None\n                put_oi  = merged["Put_OI"].to_numpy()  if "Put_OI" in merged.columns else None\n                call_vol= merged["Call_Volume"].to_numpy() if "Call_Volume" in merged.columns else None\n                put_vol = merged["Put_Volume"].to_numpy() if "Put_Volume" in merged.columns else None\n\n                if call_oi is not None:\n                    fig.add_trace(go.Scatter(x=x, y=call_oi, yaxis="y2", name="Call OI",\n                                             mode="lines", line=dict(width=2, color="#1ABC9C")))\n                if put_oi is not None:\n                    fig.add_trace(go.Scatter(x=x, y=put_oi, yaxis="y2", name="Put OI",\n                                             mode="lines", line=dict(width=2, color="#F39C12")))\n                if call_vol is not None:\n                    fig.add_trace(go.Scatter(x=x, y=call_vol, yaxis="y2", name="Call Volume",\n                                             mode="lines", line=dict(width=1, dash="dot", color="#95A5A6")))\n                if put_vol is not None:\n                    fig.add_trace(go.Scatter(x=x, y=put_vol, yaxis="y2", name="Put Volume",\n                                             mode="lines", line=dict(width=1, dash="dot", color="#E91E63")))\n\nfig.add_vline(x=spot_x, line_width=2, line_dash="solid", line_color="#FFA500")
-                xmin, xmax = float(np.min(x)), float(np.max(x))
-                mid = 0.5*(xmin + xmax)
-                _xanchor, _xshift = ('left', 8) if spot_x <= mid else ('right', -8)
-                fig.add_annotation(x=spot_x, y=1.02, xref="x", yref="paper", showarrow=False,
-                                   xanchor=_xanchor, xshift=_xshift,
-                                   text=f"Price: {spot_x:.2f}", font=dict(color="#FFA500"))
+                # Доп. оверлеи по правой оси: OI и Volume
+                call_oi  = merged["Call_OI"].to_numpy()     if "Call_OI"     in merged.columns else None
+                put_oi   = merged["Put_OI"].to_numpy()      if "Put_OI"      in merged.columns else None
+                call_vol = merged["Call_Volume"].to_numpy() if "Call_Volume" in merged.columns else None
+                put_vol  = merged["Put_Volume"].to_numpy()  if "Put_Volume"  in merged.columns else None
 
+                if call_oi is not None:
+                    fig.add_trace(go.Scatter(x=x, y=call_oi, yaxis="y2", name="Call OI",
+                                             mode="lines", line=dict(width=2, color="#1ABC9C")))
+                if put_oi is not None:
+                    fig.add_trace(go.Scatter(x=x, y=put_oi, yaxis="y2", name="Put OI",
+                                             mode="lines", line=dict(width=2, color="#F39C12")))
+                if call_vol is not None:
+                    fig.add_trace(go.Scatter(x=x, y=call_vol, yaxis="y2", name="Call Volume",
+                                             mode="lines", line=dict(width=1, dash="dot", color="#95A5A6")))
+                if put_vol is not None:
+                    fig.add_trace(go.Scatter(x=x, y=put_vol, yaxis="y2", name="Put Volume",
+                                             mode="lines", line=dict(width=1, dash="dot", color="#E91E63")))
+
+                # Вертикальная линия по цене базового актива
+                if S_ref is not None:
+                    spot_x = float(S_ref)
+                    fig.add_vline(x=spot_x, line_width=2, line_dash="solid", line_color="#FFA500")
+                    # разместим подпись над верхней частью графика
+                    _xanchor = "left" if spot_x < (x.min() + x.max())/2 else "right"
+                    _xshift  = 8 if _xanchor == "left" else -8
+                    fig.add_annotation(x=spot_x, y=1.02, xref="x", yref="paper", showarrow=False,
+                                       xanchor=_xanchor, xshift=_xshift,
+                                       text=f"Price: {spot_x:.2f}", font=dict(color="#FFA500"))
                 ymax = float(np.abs(y).max()) if y.size else 0.0
                 y2_candidates = []
                 if ag.size:
