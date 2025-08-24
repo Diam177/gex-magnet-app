@@ -454,7 +454,6 @@ if exp_dates:
                     )
                 )
 
-                # --- Оверлеи: AG (если включена), затем OI/Volume и вертикальная линия цены ---
                 if show_ag and ag.size:
                     fig.add_trace(go.Scatter(
                         x=x, y=ag, yaxis="y2", name="AG",
@@ -474,44 +473,32 @@ if exp_dates:
                         customdata=custom
                     ))
 
-                # Доп. оверлеи по правой оси: OI и Volume
-                call_oi  = merged["Call_OI"].to_numpy()     if "Call_OI"     in merged.columns else None
-                put_oi   = merged["Put_OI"].to_numpy()      if "Put_OI"      in merged.columns else None
-                call_vol = merged["Call_Volume"].to_numpy() if "Call_Volume" in merged.columns else None
-                put_vol  = merged["Put_Volume"].to_numpy()  if "Put_Volume"  in merged.columns else None
+                spot_x = float(S_ref)
+                fig.add_vline(x=spot_x, line_width=2, line_dash="solid", line_color="#FFA500")
+                xmin, xmax = float(np.min(x)), float(np.max(x))
+                mid = 0.5*(xmin + xmax)
+                _xanchor, _xshift = ('left', 8) if spot_x <= mid else ('right', -8)
+                fig.add_annotation(x=spot_x, y=1.02, xref="x", yref="paper", showarrow=False,
+                                   xanchor=_xanchor, xshift=_xshift,
+                                   text=f"Price: {spot_x:.2f}", font=dict(color="#FFA500"))
 
-                if call_oi is not None:
-                    fig.add_trace(go.Scatter(x=x, y=call_oi, yaxis="y2", name="Call OI",
-                                             mode="lines", line=dict(width=2, color="#1ABC9C")))
-                if put_oi is not None:
-                    fig.add_trace(go.Scatter(x=x, y=put_oi, yaxis="y2", name="Put OI",
-                                             mode="lines", line=dict(width=2, color="#F39C12")))
-                if call_vol is not None:
-                    fig.add_trace(go.Scatter(x=x, y=call_vol, yaxis="y2", name="Call Volume",
-                                             mode="lines", line=dict(width=1, dash="dot", color="#95A5A6")))
-                if put_vol is not None:
-                    fig.add_trace(go.Scatter(x=x, y=put_vol, yaxis="y2", name="Put Volume",
-                                             mode="lines", line=dict(width=1, dash="dot", color="#E91E63")))
-
-                # Вертикальная линия по цене базового актива
-                if S_ref is not None:
-                    spot_x = float(S_ref)
-                    fig.add_vline(x=spot_x, line_width=2, line_dash="solid", line_color="#FFA500")
-                    # разместим подпись над верхней частью графика
-                    _xanchor = "left" if spot_x < (x.min() + x.max())/2 else "right"
-                    _xshift  = 8 if _xanchor == "left" else -8
-                    fig.add_annotation(x=spot_x, y=1.02, xref="x", yref="paper", showarrow=False,
-                                       xanchor=_xanchor, xshift=_xshift,
-                                       text=f"Price: {spot_x:.2f}", font=dict(color="#FFA500"))
                 ymax = float(np.abs(y).max()) if y.size else 0.0
-                y2_candidates = []
-                if ag.size:
-                    y2_candidates.append(ag)
-                for _col in ["Call_OI", "Put_OI", "Call_Volume", "Put_Volume"]:
-                    _arr = merged[_col].to_numpy() if _col in merged.columns else None
-                    if _arr is not None and _arr.size:
-                        y2_candidates.append(_arr)
-                y2max = float(np.max([np.max(a) for a in y2_candidates])) if y2_candidates else 0.0
+                y2max = float(np.max(ag)) if ag.size else 0.0
+
+                # helper: scale series to the right axis height so they are visible with AG
+                def _scale_to_y2(arr, top):
+                    import numpy as _np
+                    if arr is None:
+                        return None
+                    if isinstance(arr, list):
+                        arr = _np.array(arr)
+                    if arr.size == 0:
+                        return arr
+                    m = float(_np.max(arr))
+                    if m <= 0 or top <= 0:
+                        return arr
+                    return arr * (top / m)
+
 
                 fig.update_layout(
                     barmode="relative",
@@ -522,7 +509,7 @@ if exp_dates:
                     yaxis_title="Net GEX",
                     dragmode=False,
                     yaxis2=dict(
-                        title="AG / OI / Volume",
+                        title="AG",
                         overlaying="y",
                         side="right",
                         showgrid=False,
@@ -534,7 +521,7 @@ if exp_dates:
                 if ymax > 0:
                     fig.update_yaxes(range=[-1.2*ymax, 1.2*ymax])
                 if y2max > 0:
-                    fig.update_layout(yaxis2=dict(range=[0, 1.2*y2max], title="AG / OI / Volume", overlaying="y", side="right", showgrid=False, tickformat=","))
+                    fig.update_layout(yaxis2=dict(range=[0, 1.2*y2max], title="AG", overlaying="y", side="right", showgrid=False, tickformat=","))
 
                 fig.update_yaxes(fixedrange=True, tickformat=",")
                 st.plotly_chart(fig, use_container_width=True, config={"displayModeBar": False, "scrollZoom": False})
