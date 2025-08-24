@@ -12,12 +12,12 @@ st.title("GEX Levels & Magnet Profile (по комбинированной ме�
 
 # ====================== Константы методики ======================
 SECONDS_PER_YEAR = 31557600.0
-DEFAULT_R = 0.01   # безарбитражная ставка r (по умолчанию)
-DEFAULT_Q = 0.00   # дивидендная доходность q (по умолчанию)
-H_EXP = 7.0        # h в W_exp = 2^(-DTE/h), дни
-KAPPA = 1.0        # κ в W_dist
-SMOOTH_WINDOW = 3  # ширина сглаживания по страйкам
-TOP_N_LEVELS = 5   # сколько магнитов показывать на сторону
+DEFAULT_R = 0.01
+DEFAULT_Q = 0.00
+H_EXP = 7.0
+KAPPA = 1.0
+SMOOTH_WINDOW = 3
+TOP_N_LEVELS = 5
 
 # ====================== Секреты / ввод ======================
 host_default = st.secrets.get("RAPIDAPI_HOST", "")
@@ -36,7 +36,7 @@ with st.sidebar:
         KAPPA   = st.slider("κ (достижимость)", 0.5, 2.0, KAPPA, 0.1)
         SMOOTH_WINDOW = st.select_slider("Сглаживание по страйку", options=[1,3,5,7], value=SMOOTH_WINDOW)
 
-# ====================== API под YH Finance v1 /markets/options ======================
+# ====================== API: YH Finance (steadyapi) ======================
 def api_headers():
     return {"X-RapidAPI-Key": RAPIDAPI_KEY, "X-RapidAPI-Host": RAPIDAPI_HOST}
 
@@ -52,100 +52,62 @@ def _try_get(url: str, params: dict | None = None):
             raise requests.HTTPError(f"Bad JSON from {url}")
     raise requests.HTTPError(f"{r.status_code} {url}\n{r.text[:400]}")
 
+# --- основной список дат (требует display=straddle) ---
 def fetch_chain_raw(symbol: str):
-    """
-    Список доступных экспираций/текущая цепочка.
-    ВАЖНО: для провайдера требуется display=straddle.
-    """
     return _try_get(BASE_URL(), params={"ticker": symbol, "display": "straddle"})
 
-def fetch_specific_expiry(symbol: str, epoch: int):
-    """
-    Конкретная дата экспирации.
-    """
-    raw = _try_get(BASE_URL(), params={"ticker": symbol, "expiration": int(epoch), "display": "straddle"})
-    shaped = ensure_chain_shape(raw)
-    for ch in shaped["chains"]:
-        if ch.get("expiration") == int(epoch):
-            return {"quote": shaped.get("quote", {}), "chain": ch}
-    if shaped["chains"]:
-        return {"quote": shaped.get("quote", {}), "chain": shaped["chains"][0]}
-    return {"quote": shaped.get("quote", {}), "chain": {"expiration": int(epoch), "calls": [], "puts": []}}
+# --- небольшой извлекатель цены/времени из options-ответа ---
+def _quote_from_options_body(raw: dict) -> dict:
+    q = {}
+    body = raw.get("body")
+    if isinstance(body, list) and body:
+        b0 = body[0]
+        # цена
+        cand_price = []
+        if isinstance(b0.get("quote"), dict):
+            cand_price += [b0["quote"].get(k) for k in ("regularMarketPrice","last","underlyingPrice","price")]
+        cand_price += [b0.get(k) for k in ("regularMarketPrice","last","underlyingPrice","price")]
+        for v in cand_price:
+            if isinstance(v, (int,float)):
+                q["regularMarketPrice"] = float(v); break
+        # время
+        cand_time = []
+        if isinstance(b0.get("quote"), dict):
+            cand_time += [b0["quote"].get(k) for k in ("regularMarketTime","time","timestamp")]
+        cand_time += [b0.get(k) for k in ("regularMarketTime","time","timestamp")]
+        for v in cand_time:
+            if isinstance(v, (int,float)):
+                q["regularMarketTime"] = int(v); break
+    return q
 
+# --- унификация под нашу схему ---
 def ensure_chain_shape(raw: dict):
     """
-    Унификация произвольного ответа к виду:
-      {
-        'quote': {'regularMarketPrice': float, 'regularMarketTime': int},
-        'expirationDates': [epoch, ...],
-        'chains': [{'expiration': epoch, 'calls': [...], 'puts': [...]}, ...]
-      }
+    { 'quote': {...}, 'expirationDates': [epoch,...],
+      'chains': [{'expiration': epoch, 'calls': [...], 'puts': [...]}] }
     """
     quote = {}
-
-    # --- expirations ---
     expirationDates = []
-    # прямые ключи
-    for k in ("expirationDates", "expirations", "dates"):
-        v = raw.get(k)
-        if isinstance(v, list) and all(isinstance(x, (int, float)) for x in v):
-            expirationDates = [int(x) for x in v]
-            break
-    # вложенные места: data / result
-    if not expirationDates:
-        for up in ("data", "result"):
-            v = raw.get(up)
-            if isinstance(v, dict):
-                for k in ("expirationDates", "expirations", "dates"):
-                    vv = v.get(k)
-                    if isinstance(vv, list) and all(isinstance(x, (int, float)) for x in vv):
-                        expirationDates = [int(x) for x in vv]
-                        break
-            if expirationDates:
-                break
 
-    # --- quote: цена и время ---
-    def _get_num(paths):
-        for path in paths:
-            cur = raw
-            ok = True
-            for key in path:
-                if isinstance(cur, dict) and key in cur:
-                    cur = cur[key]
-                else:
-                    ok = False; break
-            if ok and isinstance(cur, (int, float)):
-                return cur
-        return None
+    # даты: body[0].expirationDates
+    body = raw.get("body")
+    if isinstance(body, list) and body:
+        b0 = body[0]
+        exp_list = b0.get("expirationDates") or b0.get("expirations") or b0.get("dates")
+        if isinstance(exp_list, list):
+            expirationDates = [int(x) for x in exp_list if isinstance(x, (int, float))]
 
-    price = _get_num([("quote","regularMarketPrice"),
-                      ("data","quote","regularMarketPrice"),
-                      ("underlying","price"), ("data","underlying","price"),
-                      ("price",), ("last",), ("underlyingPrice",)])
-    ttime = _get_num([("quote","regularMarketTime"),
-                      ("data","quote","regularMarketTime"),
-                      ("underlying","time"), ("data","underlying","time"),
-                      ("time",), ("timestamp",)])
-    if price is not None:  quote["regularMarketPrice"] = float(price)
-    if ttime is not None:  quote["regularMarketTime"]  = int(ttime)
+    # quote из options-ответа (что удастся)
+    quote.update(_quote_from_options_body(raw))
 
-    # --- chains: ищем и сверху, и в data/result ---
+    # цепочки: если провайдер сразу положил calls/puts в body[n]
     chains = []
-    possible_nodes = [raw]
-    for k in ("options","data","result","chain","chains"):
-        v = raw.get(k)
-        if isinstance(v, (dict, list)):
-            possible_nodes.append(v)
-
-    def _as_list(x):
-        if isinstance(x, list): return x
-        if isinstance(x, dict): return [x]
-        return []
-
-    for node in possible_nodes:
-        for obj in _as_list(node):
-            calls = obj.get("calls") or obj.get("call") or obj.get("Calls")
-            puts  = obj.get("puts")  or obj.get("put")  or obj.get("Puts")
+    if isinstance(body, list):
+        for obj in body:
+            if not isinstance(obj, dict): 
+                continue
+            calls = obj.get("calls") or (obj.get("options") or {}).get("calls")
+            puts  = obj.get("puts")  or (obj.get("options") or {}).get("puts")
             exp   = obj.get("expiration") or obj.get("expiry") or obj.get("date")
             if isinstance(calls, list) and isinstance(puts, list) and exp is not None:
                 chains.append({"expiration": int(exp), "calls": calls, "puts": puts})
@@ -155,14 +117,61 @@ def ensure_chain_shape(raw: dict):
     for ch in chains:
         exp = ch.get("expiration")
         sig = (exp, len(ch.get("calls", [])) + len(ch.get("puts", [])))
-        if exp is None or sig in seen:
+        if exp is None or sig in seen: 
             continue
         seen.add(sig); norm.append(ch)
     norm.sort(key=lambda x: x.get("expiration", 0))
 
     return {"quote": quote, "expirationDates": expirationDates, "chains": norm}
 
-# ====================== Математика (BSM Gamma & профили) ======================
+# --- котировочный фолбэк, если в options нет цены/времени ---
+def fetch_quote(symbol: str) -> dict:
+    base = f"https://{RAPIDAPI_HOST}"
+    candidates = [
+        (f"{base}/api/v1/markets/quotes", {"tickers": symbol}),
+        (f"{base}/api/v1/market/quotes",  {"tickers": symbol}),
+        (f"{base}/api/v1/markets/quotes/real-time", {"symbols": symbol}),
+    ]
+    for url, params in candidates:
+        try:
+            raw = _try_get(url, params=params)
+            b = raw.get("body")
+            if isinstance(b, list) and b:
+                out = {}
+                p = b[0].get("regularMarketPrice") or b[0].get("price") or b[0].get("last")
+                t = b[0].get("regularMarketTime")  or b[0].get("time")  or b[0].get("timestamp")
+                if isinstance(p, (int,float)): out["regularMarketPrice"] = float(p)
+                if isinstance(t, (int,float)): out["regularMarketTime"]  = int(t)
+                if out: return out
+        except Exception:
+            continue
+    return {}
+
+# --- конкретная дата (options + quote-фолбэк) ---
+def fetch_specific_expiry(symbol: str, epoch: int):
+    raw = _try_get(BASE_URL(), params={"ticker": symbol, "expiration": int(epoch), "display": "straddle"})
+    shaped = ensure_chain_shape(raw)
+
+    chain = None
+    for ch in shaped["chains"]:
+        if ch.get("expiration") == int(epoch):
+            chain = ch; break
+    if chain is None:
+        body = raw.get("body")
+        if isinstance(body, list) and body:
+            b0 = body[0]
+            if isinstance(b0.get("calls"), list) and isinstance(b0.get("puts"), list):
+                chain = {"expiration": int(epoch), "calls": b0.get("calls", []), "puts": b0.get("puts", [])}
+    if chain is None:
+        chain = {"expiration": int(epoch), "calls": [], "puts": []}
+
+    quote = dict(shaped.get("quote", {}))
+    if "regularMarketPrice" not in quote or "regularMarketTime" not in quote:
+        quote.update({k:v for k,v in fetch_quote(symbol).items() if k not in quote})
+
+    return {"quote": quote, "chain": chain}
+
+# ====================== Математика ======================
 def bsm_gamma(S, K, sigma, tau, r=DEFAULT_R, q=DEFAULT_Q):
     if tau <= 0 or sigma <= 0 or S <= 0 or K <= 0:
         return 0.0
@@ -172,11 +181,6 @@ def bsm_gamma(S, K, sigma, tau, r=DEFAULT_R, q=DEFAULT_Q):
     return float(gamma)
 
 def compute_chain_gex(chain: dict, quote: dict):
-    """
-    Возвращает DataFrame с колонками:
-      strike, type(call/put), oi, iv, tau, gex_signed
-    где gex_signed = +OI*Γ*100*S для call и -... для put.
-    """
     S = quote.get("regularMarketPrice")
     t0 = quote.get("regularMarketTime")
     exp = chain.get("expiration")
@@ -205,23 +209,15 @@ def compute_chain_gex(chain: dict, quote: dict):
     return pd.DataFrame(rows), S
 
 def weight_scheme(df_all_exp: pd.DataFrame, S: float, h=H_EXP, kappa=KAPPA):
-    """
-    Добавляет веса:
-      W_exp = 2^{-DTE/h}
-      W_liq ≈ sqrt(OI_share)    (по экспирации)
-      W_dist = exp( - [ln(K/S)]^2 / (2 κ^2 (IV√τ)^2) )
-    """
     df = df_all_exp.copy()
     df["DTE"]   = df["tau"] * 365.0
     df["W_exp"] = 2.0 ** (-df["DTE"] / h)
 
-    # ликвидность по экспирации
     oi_by_exp = df.groupby("expiry")["oi"].sum().rename("exp_oi")
     df = df.merge(oi_by_exp, on="expiry", how="left")
     total_oi = float(df["oi"].sum()) or 1.0
     df["OI_share"] = df["exp_oi"] / total_oi
 
-    # достижимость
     sig = df["iv"].clip(lower=1e-6)
     root_tau = np.sqrt(df["tau"].clip(lower=1e-9))
     denom = 2.0 * (kappa**2) * (sig * root_tau)**2
@@ -246,7 +242,6 @@ def find_levels(profile: pd.DataFrame):
     strikes = prof["strike"].values
     vals = prof["Magnet_smooth"].values
 
-    # нулевая линия (пересечения)
     flips = []
     for i in range(1, len(vals)):
         y0, y1 = vals[i-1], vals[i]
@@ -257,7 +252,6 @@ def find_levels(profile: pd.DataFrame):
             x_cross = x0 + (x1 - x0) * (-y0) / (y1 - y0) if (y1 - y0) != 0 else (x0 + x1)/2
             flips.append(x_cross)
 
-    # магниты: локальные экстремумы по |Magnet|
     mags, absvals = [], np.abs(vals)
     for i in range(1, len(vals)-1):
         if absvals[i] >= absvals[i-1] and absvals[i] >= absvals[i+1]:
@@ -291,7 +285,7 @@ if btn_load:
     try:
         raw = fetch_chain_raw(ticker)
 
-        # --- Debug (можно свернуть): поможет, если провайдер отдаёт новый формат
+        # Debug-экспандер — удобно, если провайдер поменяет формат
         with st.expander("Debug: сырой ответ провайдера", expanded=False):
             if isinstance(raw, dict):
                 st.write("Ключи:", list(raw.keys())[:20])
@@ -310,7 +304,7 @@ if btn_load:
                                   format_func=lambda i: human[i], index=0)
 
         if st.button("Рассчитать уровни (эта + 7 следующих)"):
-            picked = exp_dates[picked_idx: picked_idx + 8]  # ближайшая +7
+            picked = exp_dates[picked_idx: picked_idx + 8]
             all_rows, S_ref = [], None
             for e in picked:
                 dat = fetch_specific_expiry(ticker, e)
@@ -353,15 +347,15 @@ if btn_load:
             checklist = []
             if flips:
                 flip_zone = f"{min(flips):.2f}–{max(flips):.2f}" if len(flips) > 1 else f"{flips[0]:.2f}"
-                checklist.append(f"Нулевая гамма (flip): {flip_zone}. Выше — breakout-режим, ниже — mean-revert.")
+                checklist.append(f"Нулевая гамма (flip): {flip_zone}. Выше — breakout, ниже — mean-revert.")
             if pos:
                 checklist.append("Главные магниты (+): " + ", ".join(str(round(k)) for (k,_,__) in pos[:3]))
             if neg:
                 checklist.append("Главные магниты (–): " + ", ".join(str(round(k)) for (k,_,__) in neg[:3]))
             if not checklist:
-                checklist.append("Магниты не выявлены — увеличь сглаживание или проверь ликвидность серии.")
+                checklist.append("Магниты не выявлены — увеличь сглаживание или проверь ликвидность.")
             st.markdown("- " + "\n- ".join(checklist))
 
     except Exception as e:
         st.error(str(e))
-        st.info("Если видишь 404/403 или пустые даты — проверь Host/Key и содержание блока Debug.")
+        st.info("Если снова изменится формат ответа — раскрой Debug и пришли верхнюю часть JSON, я подгоню парсер.")
