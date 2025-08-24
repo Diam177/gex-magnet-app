@@ -340,98 +340,95 @@ if exp_dates:
         key="exp_select_box"
     )
 
-    if st.button("Рассчитать уровни (эта + 7 следующих)", key="calc_levels_btn"):
-        try:
-            idx = st.session_state.exp_idx
-            picked = exp_dates[idx: idx + 8]
-            log_box = st.empty()
-            progress = st.progress(0.0)
-            all_rows, S_ref = [], None
-            per_exp_info = []
+    
+if st.button("Рассчитать уровни (эта + 7 следующих)", key="calc_levels_btn"):
+    try:
+        idx = st.session_state.exp_idx
+        picked = exp_dates[idx: idx + 8]
+        log_box = st.empty()
+        progress = st.progress(0.0)
+        all_rows, S_ref = [], None
+        per_exp_info = []
+        df_selected = None  # цепочка для выбранной (первой) экспирации
 
-            with st.spinner("Тянем цепочки и считаем Гамму..."):
-                df_selected = None  # будет хранить цепочку для выбранной экспирации (первой в списке)
+        with st.spinner("Тянем цепочки и считаем Гамму..."):
+            for j, e in enumerate(picked, start=1):
+                dat = fetch_expiry(st.session_state.ticker_loaded or ticker, int(e))
+                df_i, S_i = compute_chain_gex(dat["chain"], dat["quote"])
+                if j == 1:
+                    df_selected = df_i.copy()
+                calls_n = len(dat["chain"].get("calls", []))
+                puts_n  = len(dat["chain"].get("puts",  []))
+                per_exp_info.append(f"{time.strftime('%Y-%m-%d', time.gmtime(int(e)))}: calls={calls_n}, puts={puts_n}, rows={len(df_i)}")
+                if not df_i.empty:
+                    df_i["expiry"] = int(e)
+                    all_rows.append(df_i)
+                    if S_ref is None and S_i is not None:
+                        S_ref = S_i
+                progress.progress(j / max(1, len(picked)))
+                log_box.write("\n".join(per_exp_info))
 
-                for j, e in enumerate(picked, start=1):
-                    dat = fetch_expiry(st.session_state.ticker_loaded or ticker, int(e))
-                    df_i, S_i = compute_chain_gex(dat["chain"], dat["quote"])
-                    if j == 1:
-                        df_selected = df_i.copy()
+        if not all_rows:
+            st.warning("По выбранному окну экспираций цепочки пустые (нет строк для расчёта). Попробуй другую дату или тикер.")
+            st.stop()
 
-                    calls_n = len(dat["chain"].get("calls", []))
-                    puts_n  = len(dat["chain"].get("puts",  []))
-                    per_exp_info.append(f"{time.strftime('%Y-%m-%d', time.gmtime(int(e)))}: calls={calls_n}, puts={puts_n}, rows={len(df_i)}")
-                    if not df_i.empty:
-                        df_i["expiry"] = int(e)
-                        all_rows.append(df_i)
-                        if S_ref is None and S_i is not None:
-                            S_ref = S_i
-                    progress.progress(j / max(1, len(picked)))
-                    log_box.write("\n".join(per_exp_info))
+        if S_ref is None:
+            q = fetch_quote(st.session_state.ticker_loaded or ticker)
+            S_ref = q.get("regularMarketPrice")
+        if S_ref is None:
+            st.error("Не удалось определить Spot (regularMarketPrice).")
+            st.stop()
 
-            if not all_rows:
-                st.warning("По выбранному окну экспираций цепочки пустые (нет строк для расчёта). Попробуй другую дату или тикер.")
-                st.stop()
+        df_all = pd.concat(all_rows, ignore_index=True)
+        prof   = weight_and_profile(df_all, S=S_ref, h_days=H_EXP, kappa=KAPPA, smooth=SMOOTH)
+        if prof.empty:
+            st.warning("Профиль пуст. Проверь ликвидность и параметры весов/сглаживания.")
+            st.stop()
 
-            if S_ref is None:
-                q = fetch_quote(st.session_state.ticker_loaded or ticker)
-                S_ref = q.get("regularMarketPrice")
-            if S_ref is None:
-                st.error("Не удалось определить Spot (regularMarketPrice).")
-                st.stop()
+        flips, pos, neg = find_levels(prof)
 
-            df_all = pd.concat(all_rows, ignore_index=True)
-            prof   = weight_and_profile(df_all, S=S_ref, h_days=H_EXP, kappa=KAPPA, smooth=SMOOTH)
-            if prof.empty:
-                st.warning("Профиль пуст. Проверь ликвидность и параметры весов/сглаживания.")
-                st.stop()
+        c1, c2 = st.columns([2, 1])
+        with c1:
+            title = f"({st.session_state.ticker_loaded or ticker}, c {time.strftime('%Y-%m-%d', time.gmtime(int(picked[0])))} по {time.strftime('%Y-%m-%d', time.gmtime(int(picked[-1])))} )"
+            st.plotly_chart(
+                plot_profiles(prof, S=S_ref, flips=flips, pos=pos, neg=neg, title_note=title),
+                use_container_width=True
+            )
 
-            flips, pos, neg = find_levels(prof)
+        def rows(mags, label):
+            return [{"Strike": k, "Magnet": v, "|Magnet|": a, "Side": label} for (k, v, a) in mags]
+        levels = pd.DataFrame(rows(pos, "+") + rows(neg, "-")).sort_values("|Magnet|", ascending=False)
 
-            c1, c2 = st.columns([2, 1])
-            with c1:
-                title = f"({st.session_state.ticker_loaded or ticker}, c {time.strftime('%Y-%m-%d', time.gmtime(int(picked[0])))} по {time.strftime('%Y-%m-%d', time.gmtime(int(picked[-1])))} )"
-                st.plotly_chart(
-                    plot_profiles(prof, S=S_ref, flips=flips, pos=pos, neg=neg, title_note=title),
-                    use_container_width=True
-                )
+        with c2:
+            st.subheader("Ключевые уровни (магниты)")
+            st.dataframe(levels, use_container_width=True)
+            st.download_button(
+                "Скачать уровни (CSV)",
+                data=levels.to_csv(index=False).encode("utf-8"),
+                file_name=f"{st.session_state.ticker_loaded or ticker}_magnet_levels.csv",
+                mime="text/csv"
+            )
 
-            def rows(mags, label):
-                return [{"Strike": k, "Magnet": v, "|Magnet|": a, "Side": label} for (k, v, a) in mags]
-            levels = pd.DataFrame(rows(pos, "+") + rows(neg, "-")).sort_values("|Magnet|", ascending=False)
+        # --- Таблица Net GEX по страйкам для выбранной экспирации ---
+        if df_selected is not None and not df_selected.empty:
+            df_p = df_selected.copy()
+            df_p["type"] = df_p["type"].str.lower().map({"call":"call","put":"put"})
+            gex_by = df_p.groupby(["strike","type"])["gex_signed"].sum().unstack(fill_value=0.0)
+            for col in ("call","put"):
+                if col not in gex_by.columns:
+                    gex_by[col] = 0.0
+            gex_by = gex_by.rename(columns={"call":"GEX_call","put":"GEX_put"})
+            gex_by["Net_GEX"] = gex_by["GEX_call"] + gex_by["GEX_put"]
+            gex_by["|Net_GEX|"] = gex_by["Net_GEX"].abs()
+            gex_table = gex_by.reset_index().sort_values("strike")
+            st.subheader("Net GEX по страйкам для выбранной экспирации")
+            st.dataframe(gex_table, use_container_width=True)
+            st.download_button(
+                "Скачать Net GEX по страйкам (CSV)",
+                data=gex_table.to_csv(index=False).encode("utf-8"),
+                file_name=f"{st.session_state.ticker_loaded or ticker}_{time.strftime('%Y-%m-%d', time.gmtime(int(picked[0])))}_netgex_by_strike.csv",
+                mime="text/csv"
+            )
 
-            with c2:
-                st.subheader("Ключевые уровни (магниты)")
-                st.dataframe(levels, use_container_width=True)
-                st.download_button(
-                    "Скачать уровни (CSV)",
-                    data=levels.to_csv(index=False).encode("utf-8"),
-                    file_name=f"{st.session_state.ticker_loaded or ticker}_magnet_levels.csv",
-                    mime="text/csv"
-                )
-
-# --- Таблица Net GEX по страйкам для выбранной экспирации ---
-if df_selected is not None and not df_selected.empty:
-    # пивот по типу опциона
-    df_p = df_selected.copy()
-    df_p["type"] = df_p["type"].str.lower().map({"call":"call","put":"put"})
-    gex_by = df_p.groupby(["strike","type"])["gex_signed"].sum().unstack(fill_value=0.0)
-    # гарантируем колонки
-    for col in ("call","put"): 
-        if col not in gex_by.columns: 
-            gex_by[col] = 0.0
-    gex_by = gex_by.rename(columns={"call":"GEX_call","put":"GEX_put"})
-    gex_by["Net_GEX"] = gex_by["GEX_call"] + gex_by["GEX_put"]
-    gex_by["|Net_GEX|"] = gex_by["Net_GEX"].abs()
-    gex_table = gex_by.reset_index().sort_values("strike")
-    st.subheader("Net GEX по страйкам для выбранной экспирации")
-    st.dataframe(gex_table, use_container_width=True)
-    st.download_button(
-        "Скачать Net GEX по страйкам (CSV)",
-        data=gex_table.to_csv(index=False).encode("utf-8"),
-        file_name=f"{st.session_state.ticker_loaded or ticker}_{human[st.session_state.exp_idx]}_netgex_by_strike.csv",
-        mime="text/csv"
-    )
-
-        except Exception as e:
-            st.error(f"Ошибка расчёта уровней: {e}")
+    except Exception as e:
+        st.error(f"Ошибка расчёта уровней: {e}")
