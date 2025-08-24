@@ -504,11 +504,11 @@ if exp_dates:
                 fig.update_xaxes(tickmode="array", tickvals=tickvals, ticktext=ticktext, tickangle=0)
                 fig.update_xaxes(fixedrange=True)
                 # динамический диапазон Y с учётом min/max и отступа
-ymin = float(y.min()) if y.size else 0.0
-ymax = float(y.max()) if y.size else 0.0
-if y.size:
-    pad = 0.1 * (ymax - ymin) if ymax > ymin else abs(ymax)*0.1
-    fig.update_yaxes(range=[ymin - pad, ymax + pad])
+                ymin = float(y.min()) if y.size else 0.0
+                ymax = float(y.max()) if y.size else 0.0
+                if y.size:
+                    pad = 0.1 * (ymax - ymin) if ymax > ymin else abs(ymax)*0.1
+                    fig.update_yaxes(range=[ymin - pad, ymax + pad])
                 if y2max > 0:
                     fig.update_layout(yaxis2=dict(range=[0, 1.2*y2max], title="AG", overlaying="y", side="right", showgrid=False, tickformat=","))
 
