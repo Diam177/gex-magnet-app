@@ -39,8 +39,8 @@ def api_headers():
 def base_options_url():
     return f"https://{RAPIDAPI_HOST}/api/v1/markets/options"
 
-def _get(url, params=None):
-    r = requests.get(url, headers=api_headers(), params=params or {}, timeout=25)
+def _get(url, params):
+    r = requests.get(url, headers=api_headers(), params=params, timeout=30)
     r.raise_for_status()
     return r.json()
 
@@ -75,43 +75,37 @@ def fetch_quote(symbol: str) -> dict:
     for url, p in candidates:
         try:
             raw = _norm_top(_get(url, p))
-            body = raw.get("body")
+            body = raw.get("body") or raw
             if isinstance(body, list) and body:
-                node = body[0]
-                price = node.get("regularMarketPrice") or node.get("price") or node.get("last")
-                ts    = node.get("regularMarketTime")  or node.get("time")  or node.get("timestamp")
+                q = body[0]
+            elif isinstance(body, dict):
+                q = body.get("quotes") or body.get("quote") or body
+                if isinstance(q, list) and q:
+                    q = q[0]
+            else:
                 q = {}
-                if isinstance(price, (int,float)): q["regularMarketPrice"] = float(price)
-                if ts is not None: q["regularMarketTime"] = _to_sec(ts)
-                if q: return q
+            # нормализуем поля
+            out = {}
+            for k in ("regularMarketPrice","regularMarketTime"):
+                if isinstance(q, dict) and k in q:
+                    out[k] = q[k]
+            return out
         except Exception:
             continue
     return {}
 
 def quote_from_options(raw: dict) -> dict:
-    """Пытаемся достать quote прямо из options-листа (как в твоём debug)."""
-    q = {}
+    raw = _norm_top(raw)
     body = raw.get("body")
+    q = {}
+    # часто котировка лежит в body[0].quote
     if isinstance(body, list) and body:
         b0 = body[0]
-        # иногда quote лежит прямо в этом объекте
-        qnode = b0.get("quote")
-        if isinstance(qnode, dict):
-            for key in ("regularMarketPrice","last","underlyingPrice","price"):
-                v = qnode.get(key)
-                if isinstance(v,(int,float)): q["regularMarketPrice"]=float(v); break
-            for key in ("regularMarketTime","time","timestamp"):
-                v = qnode.get(key)
-                if v is not None: q["regularMarketTime"]=_to_sec(v); break
-        # fallback — попробуем взять из самого b0
-        if "regularMarketPrice" not in q:
-            for key in ("regularMarketPrice","last","underlyingPrice","price"):
-                v = b0.get(key)
-                if isinstance(v,(int,float)): q["regularMarketPrice"]=float(v); break
-        if "regularMarketTime" not in q:
-            for key in ("regularMarketTime","time","timestamp"):
-                v = b0.get(key)
-                if v is not None: q["regularMarketTime"]=_to_sec(v); break
+        if isinstance(b0, dict):
+            q0 = b0.get("quote") or {}
+            if isinstance(q0, dict):
+                for k in ("regularMarketPrice","regularMarketTime"):
+                    if k in q0: q[k] = q0[k]
     return q
 
 def ensure_shape(raw: dict):
@@ -147,13 +141,9 @@ def ensure_shape(raw: dict):
                 if exp:
                     chains.append({"expiration": exp, "calls": calls, "puts": puts})
 
-    # дедуп и сортировка
-    seen = set(); uniq = []
-    for ch in chains:
-        key = (ch["expiration"], len(ch["calls"]), len(ch["puts"]))
-        if key not in seen:
-            seen.add(key); uniq.append(ch)
-    chains = sorted(uniq, key=lambda z: z["expiration"])
+    if not expirationDates:
+        # fallback: если нет списка дат, соберём из chains
+        expirationDates = sorted({ ch.get("expiration") for ch in chains if ch.get("expiration") })
 
     return {"expirationDates": [e for e in expirationDates if e], "chains": chains, "quote": quote}
 
@@ -179,11 +169,16 @@ def fetch_expiry(symbol: str, epoch: int):
                     return {"quote": q, "chain": ch}
         except Exception:
             continue
-    # fallback: вернём пустую цепочку, но с попыткой достать котировку
-    q = quote_from_options(last or {}) or fetch_quote(symbol) or {"regularMarketTime": int(time.time())}
-    return {"quote": q, "chain": {"expiration": epoch, "calls": [], "puts": []}}
+    if last:
+        shaped = ensure_shape(last)
+        if shaped.get("chains"):
+            ch = shaped["chains"][0]
+            q = shaped.get("quote", {})
+            if "regularMarketTime" not in q: q["regularMarketTime"] = int(time.time())
+            return {"quote": q, "chain": ch}
+    return {"quote": {}, "chain": {"expiration": epoch, "calls": [], "puts": []}}
 
-# ========== Математика ==========
+# ========== Математика/методика ==========
 def bsm_gamma(S, K, sigma, tau, r=DEFAULT_R, q=DEFAULT_Q):
     if not (S and K and sigma and tau) or S<=0 or K<=0 or sigma<=0 or tau<=0:
         return 0.0
@@ -215,14 +210,14 @@ def compute_chain_gex(chain: dict, quote: dict):
     df = pd.DataFrame(rows)
     return df, float(S)
 
-def weight_and_profile(df_all: pd.DataFrame, S: float, h_days: float, kappa: float, smooth: int):
-    if df_all.empty:
-        return pd.DataFrame()
-    df = df_all.copy()
-    df["DTE"]   = df["tau"] * 365.0
-    df["W_exp"] = 2.0 ** (-df["DTE"]/h_days)
+def weight_and_profile(df: pd.DataFrame, S: float, h_days: float, kappa: float, smooth: int):
+    if df.empty: return pd.DataFrame()
+    df = df.copy()
+    # экспоненциальный вес по окну экспираций (h_days)
+    df["W_exp"] = np.exp(-df["tau"]*365.0/h_days)
 
-    oi_by_exp = df.groupby("expiry")["oi"].sum().rename("exp_oi") if "expiry" in df.columns else pd.Series(dtype=float)
+    # доля OI по экспирации
+    oi_by_exp = df.groupby("tau")["oi"].sum().rename("exp_oi").reset_index().rename(columns={"tau":"expiry"})
     if not oi_by_exp.empty:
         df = df.merge(oi_by_exp, on="expiry", how="left")
         total_oi = float(df["oi"].sum()) or 1.0
@@ -255,30 +250,30 @@ def find_levels(profile: pd.DataFrame):
     flips = []
     for i in range(1, len(vals)):
         y0, y1 = vals[i-1], vals[i]
-        if (y0>0 and y1<0) or (y0<0 and y1>0):
-            x0,x1 = strikes[i-1], strikes[i]
-            x = x0 + (x1-x0)*(-y0)/(y1-y0) if (y1-y0)!=0 else (x0+x1)/2
-            flips.append(float(x))
-    mags, absv = [], np.abs(vals)
-    for i in range(1,len(vals)-1):
-        if absv[i]>=absv[i-1] and absv[i]>=absv[i+1]:
-            mags.append((float(strikes[i]), float(vals[i]), float(absv[i])))
-    pos = sorted([(k,v,a) for (k,v,a) in mags if v>0], key=lambda x: x[2], reverse=True)[:TOP_N_LEVELS]
-    neg = sorted([(k,v,a) for (k,v,a) in mags if v<0], key=lambda x: x[2], reverse=True)[:TOP_N_LEVELS]
+        if (y0 <= 0 and y1 > 0) or (y0 >= 0 and y1 < 0):
+            flips.append(float(strikes[i]))
+    abs_mag = np.abs(vals)
+    order = np.argsort(-abs_mag)
+    pos = [(float(strikes[i]), float(vals[i]), float(abs_mag[i])) for i in order if vals[i] > 0][:TOP_N_LEVELS]
+    neg = [(float(strikes[i]), float(vals[i]), float(abs_mag[i])) for i in order if vals[i] < 0][:TOP_N_LEVELS]
     return flips, pos, neg
 
 def plot_profiles(profile: pd.DataFrame, S: float, flips, pos, neg, title_note=""):
+    prof = profile.copy()
     fig = go.Figure()
-    fig.add_trace(go.Scatter(x=profile["strike"], y=profile["NetGEX_smooth"],
-                             name="Net GEX (сглаж.)", mode="lines"))
-    fig.add_trace(go.Scatter(x=profile["strike"], y=profile["Magnet_smooth"],
-                             name="Magnet (взвеш., сглаж.)", mode="lines"))
-    fig.add_hline(y=0, line_dash="dot", line_color="gray", annotation_text="Zero Gamma")
-    fig.add_vline(x=S, line_dash="dot", line_color="red", annotation_text=f"Spot {S:.2f}")
-    for x in flips: fig.add_vline(x=x, line_dash="dash", line_color="#f1c40f", annotation_text="Gamma Flip")
-    for (k,v,a) in pos: fig.add_scatter(x=[k], y=[v], mode="markers", marker=dict(size=10), name=f"+Magnet {k}")
-    for (k,v,a) in neg: fig.add_scatter(x=[k], y=[v], mode="markers", marker=dict(size=10), name=f"-Magnet {k}")
-    fig.update_layout(title=f"Профиль GEX/Magnet {title_note}", xaxis_title="Strike", yaxis_title="Value", height=520)
+    fig.add_trace(go.Scatter(x=prof["strike"], y=prof["Magnet_smooth"], name="Magnet", mode="lines"))
+    fig.add_trace(go.Scatter(x=prof["strike"], y=prof["NetGEX_smooth"], name="Net GEX (сглаж.)", mode="lines"))
+    for f in flips or []:
+        fig.add_vline(x=float(f), line_width=1, line_dash="dot", line_color="#888")
+    fig.add_vline(x=float(S), line_width=2, line_dash="solid", line_color="#FFA500")
+    fig.update_layout(
+        title=title_note, showlegend=True,
+        margin=dict(l=40,r=20,t=30,b=40),
+        xaxis_title="Strike", yaxis_title="Value",
+        dragmode=False
+    )
+    fig.update_xaxes(fixedrange=True)
+    fig.update_yaxes(fixedrange=True, tickformat=",")
     return fig
 
 # ========== Интерэктив: загрузка и расчёт ==========
@@ -297,11 +292,7 @@ if btn_load:
             )
 
         shaped = ensure_shape(raw)
-        exp_dates = shaped.get("expirationDates")
-        if not exp_dates:
-            st.error("Не удалось получить список экспираций (пустой ответ).")
-            st.stop()
-        # сохраним всё нужное для последующих запусков
+        exp_dates = shaped.get("expirationDates", [])
         st.session_state.raw_listing = raw
         st.session_state.exp_dates = exp_dates
         st.session_state.ticker_loaded = ticker
@@ -314,11 +305,9 @@ if btn_load:
             st.error("Не удалось получить список экспираций (пустой ответ).")
             st.stop()
 
-
     except Exception as e:
         st.error(f"Ошибка: {e}")
         st.info("Открой «Debug: сырой ответ провайдера» и скачай JSON — пришли мне файл, если ошибка повторится.")
-
 
 # === Standalone selection and calculation section ===
 exp_dates = st.session_state.get("exp_dates", [])
@@ -347,16 +336,16 @@ if exp_dates:
                     per_exp_info.append(f"{time.strftime('%Y-%m-%d', time.gmtime(int(e)))}: calls={calls_n}, puts={puts_n}, rows={len(df_i)}")
                     if j == 1:
                         df_selected = df_i.copy()
+                    if S_i is not None:
+                        S_ref = S_i
                     if not df_i.empty:
                         df_i["expiry"] = int(e)
                         all_rows.append(df_i)
-                        if S_ref is None and S_i is not None:
-                            S_ref = S_i
                     progress.progress(j / max(1, len(picked)))
                     log_box.write("\n".join(per_exp_info))
 
             if not all_rows:
-             st.warning("По выбранному окну экспираций данные пустые (нет строк для расчёта). Попробуй другую дату или тикер.")
+                st.warning("По выбранному окну экспираций данные пустые (нет строк для расчёта). Попробуй другую дату или тикер.")
                 st.stop()
 
             if S_ref is None:
@@ -419,7 +408,7 @@ if exp_dates:
                 st.download_button(
                     "Скачать Net GEX по страйкам (CSV)",
                     data=gex_table.to_csv(index=False).encode("utf-8"),
-                     file_name=f"{st.session_state.ticker_loaded or ticker}_{time.strftime('%Y-%m-%d', time.gmtime(int(picked[0])))}_netgex_by_strike.csv",
+                    file_name=f"{st.session_state.ticker_loaded or ticker}_{time.strftime('%Y-%m-%d', time.gmtime(int(picked[0])))}_netgex_by_strike.csv",
                     mime="text/csv"
                 )
 
@@ -433,7 +422,7 @@ if exp_dates:
                             g[col] = 0.0
 
                 bar_df = grp_gex.rename(columns={"call":"GEX_call","put":"GEX_put"})
-                 bar_df["Net_GEX"] = (bar_df["GEX_CALL"] + bar_df.get("GEX_PUT", 0.0)) if "GEX_CALL" in bar_df.columns else (bar_df["GEX_call"] + bar_df["GEX_put"])
+                bar_df["Net_GEX"] = (bar_df["GEX_CALL"] + bar_df.get("GEX_PUT", 0.0)) if "GEX_CALL" in bar_df.columns else (bar_df["GEX_call"] + bar_df["GEX_put"])
                 oi_df  = grp_oi.rename(columns={"call":"Call_OI","put":"Put_OI"})
                 vol_df = grp_vol.rename(columns={"call":"Call_Volume","put":"Put_Volume"})
                 merged = bar_df.join(oi_df).join(vol_df).reset_index().sort_values("strike")
@@ -452,12 +441,13 @@ if exp_dates:
                 abs_y = np.abs(y)
                 if abs_y.size:
                     max_abs = float(abs_y.max())
-                     alpha = float(ALPHA_PCT)/100.0
+                    alpha = float(ALPHA_PCT)/100.0
                     sig = abs_y >= (alpha * max_abs)
                     if sig.any():
                         idxs = np.where(sig)[0]
                         i0, i1 = max(0, int(idxs.min())-3), min(len(x)-1, int(idxs.max())+3)
                         x, y, custom = x[i0:i1+1], y[i0:i1+1], custom[i0:i1+1]
+
                 # подготовим тики и подписи для каждой видимой метки страйка (числовая ось)
                 tickvals = x.tolist()
                 ticktext = [str(int(v)) if float(v).is_integer() else f"{v:g}" for v in x]
@@ -501,36 +491,37 @@ if exp_dates:
                     yaxis_title="Net GEX",
                     dragmode=False,
                 )
-                 # Кнопка для скачивания debug.zip с полезными артефактами
-                 try:
-                     buf = io.BytesIO()
-                     with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as zf:
-                         if st.session_state.get("raw_listing"):
-                         zf.writestr("raw_listing.json", json.dumps(st.session_state.raw_listing, ensure_ascii=False, indent=2))
-                         if S_ref is not None:
-                         zf.writestr("quote.json", json.dumps({"regularMarketPrice": float(S_ref)}, ensure_ascii=False, indent=2))
-                         try:
-                             zf.writestr("netgex_by_strike.csv", gex_table.to_csv(index=False))
-                         except Exception:
-                             pass
-                         try:
-                             zf.writestr("magnet_levels.csv", levels.to_csv(index=False))
-                         except Exception:
-                             pass
-                     st.download_button(
-                         "Скачать debug.zip",
-                         data=buf.getvalue(),
-                         file_name=f"{st.session_state.ticker_loaded or ticker}_debug.zip",
-                         mime="application/zip"
-                     )
-                 except Exception:
-                     pass
                 fig.update_xaxes(tickmode="array", tickvals=tickvals, ticktext=ticktext, tickangle=0)
                 fig.update_xaxes(fixedrange=True)
                 if ymax > 0:
                     fig.update_yaxes(range=[-1.2*ymax, 1.2*ymax])
                 fig.update_yaxes(fixedrange=True, tickformat=",")
                 st.plotly_chart(fig, use_container_width=True, config={"displayModeBar": False, "scrollZoom": False})
+
+                # Кнопка для скачивания debug.zip с полезными артефактами
+                try:
+                    buf = io.BytesIO()
+                    with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as zf:
+                        if st.session_state.get("raw_listing"):
+                            zf.writestr("raw_listing.json", json.dumps(st.session_state.raw_listing, ensure_ascii=False, indent=2))
+                        if S_ref is not None:
+                            zf.writestr("quote.json", json.dumps({"regularMarketPrice": float(S_ref)}, ensure_ascii=False, indent=2))
+                        try:
+                            zf.writestr("netgex_by_strike.csv", gex_table.to_csv(index=False))
+                        except Exception:
+                            pass
+                        try:
+                            zf.writestr("magnet_levels.csv", levels.to_csv(index=False))
+                        except Exception:
+                            pass
+                    st.download_button(
+                        "Скачать debug.zip",
+                        data=buf.getvalue(),
+                        file_name=f"{st.session_state.ticker_loaded or ticker}_debug.zip",
+                        mime="application/zip"
+                    )
+                except Exception:
+                    pass
 
         except Exception as e:
             st.error(f"Ошибка расчёта уровней: {e}")
