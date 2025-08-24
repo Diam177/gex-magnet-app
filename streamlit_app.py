@@ -81,11 +81,17 @@ def _quote_from_options_body(raw: dict) -> dict:
     return q
 
 # --- унификация под нашу схему ---
-def ensure_chain_shape(raw: dict):
+def ensure_chain_shape(raw: dict | list):
     """
-    { 'quote': {...}, 'expirationDates': [epoch,...],
-      'chains': [{'expiration': epoch, 'calls': [...], 'puts': [...]}] }
+    Возвращает:
+      { 'quote': {...}, 'expirationDates': [epoch,...],
+        'chains': [{'expiration': epoch, 'calls': [...], 'puts': [...]}] }
+    Нормализует случай, когда верхний уровень — список.
     """
+    # НОРМАЛИЗАЦИЯ: если прилетел список — приводим к виду {"body": [...]}
+    if isinstance(raw, list):
+        raw = {"body": raw}
+
     quote = {}
     expirationDates = []
 
@@ -135,6 +141,9 @@ def fetch_quote(symbol: str) -> dict:
     for url, params in candidates:
         try:
             raw = _try_get(url, params=params)
+            # НОРМАЛИЗАЦИЯ: иногда приходит список
+            if isinstance(raw, list):
+                raw = {"body": raw}
             b = raw.get("body")
             if isinstance(b, list) and b:
                 out = {}
@@ -150,6 +159,10 @@ def fetch_quote(symbol: str) -> dict:
 # --- конкретная дата (options + quote-фолбэк) ---
 def fetch_specific_expiry(symbol: str, epoch: int):
     raw = _try_get(BASE_URL(), params={"ticker": symbol, "expiration": int(epoch), "display": "straddle"})
+    # НОРМАЛИЗАЦИЯ: если верхний уровень — список
+    if isinstance(raw, list):
+        raw = {"body": raw}
+
     shaped = ensure_chain_shape(raw)
 
     chain = None
@@ -284,6 +297,9 @@ if btn_load:
         st.stop()
     try:
         raw = fetch_chain_raw(ticker)
+        # НОРМАЛИЗАЦИЯ: если вдруг пришёл список, оборачиваем его в словарь
+        if isinstance(raw, list):
+            raw = {"body": raw}
 
         # Debug-экспандер — удобно, если провайдер поменяет формат
         with st.expander("Debug: сырой ответ провайдера", expanded=False):
