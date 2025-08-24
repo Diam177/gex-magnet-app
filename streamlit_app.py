@@ -494,7 +494,15 @@ if exp_dates:
 
                 spot_x = float(S_ref)
                 fig.add_vline(x=spot_x, line_width=2, line_dash="solid", line_color="#FFA500")
-                fig.add_annotation(x=spot_x, y=1.02, yref="paper", showarrow=False,
+                # Place the label so it does not overlap the vline
+                xmin, xmax = float(np.min(x)), float(np.max(x))
+                mid = 0.5*(xmin + xmax)
+                if spot_x <= mid:
+                    _xanchor, _xshift = 'left', 8
+                else:
+                    _xanchor, _xshift = 'right', -8
+                fig.add_annotation(x=spot_x, y=1.02, xref='x', yref='paper', showarrow=False,
+                                   xanchor=_xanchor, xshift=_xshift,
                                    text=f"Price: {spot_x:.2f}", font=dict(color="#FFA500"))
 
                 ymax = float(np.abs(y).max()) if y.size else 0.0
