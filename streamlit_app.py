@@ -31,15 +31,6 @@ with st.sidebar:
         KAPPA   = st.slider("κ (достижимость)", 0.5, 2.0, 1.0, 0.1)
         SMOOTH  = st.select_slider("Сглаживание по страйку (оконный размер)", options=[1,3,5,7], value=3)
 
-
-# === Session state init for stable UI across reruns ===
-if "exp_dates" not in st.session_state:
-    st.session_state.exp_dates = []
-    st.session_state.raw_listing = None
-    st.session_state.ticker_loaded = None
-    st.session_state.exp_idx = 0  # selected expiry index
-
-
 # ========== RapidAPI helpers ==========
 def api_headers():
     return {"X-RapidAPI-Key": RAPIDAPI_KEY, "X-RapidAPI-Host": RAPIDAPI_HOST}
@@ -313,198 +304,70 @@ if btn_load:
             st.error("Не удалось получить список экспираций (пустой ответ).")
             st.stop()
 
+        human = [time.strftime("%Y-%m-%d", time.gmtime(e)) for e in exp_dates]
+        idx = st.selectbox("Выбери ближайшую экспирацию", list(range(len(exp_dates))),
+                           format_func=lambda i: human[i], index=0)
 
-        # Save to session state and show instruction
-        st.session_state.raw_listing = raw
-        st.session_state.exp_dates = exp_dates
-        st.session_state.ticker_loaded = ticker
-        st.session_state.exp_idx = 0
-        st.success(f"Экспирации загружены для {ticker} — выбери дату слева и нажми «Рассчитать уровни…».")
+        if st.button("Рассчитать уровни (эта + 7 следующих)"):
+            picked = exp_dates[idx : idx+8]
+            log_box = st.empty()
+            progress = st.progress(0)
+            all_rows, S_ref = [], None
+            per_exp_info = []
 
-    except Exception as e:
-        st.error(f"Ошибка загрузки экспираций: {e}")
+            with st.spinner("Тянем цепочки и считаем Гамму..."):
+                for j, e in enumerate(picked, start=1):
+                    dat = fetch_expiry(ticker, int(e))
+                    df_i, S_i = compute_chain_gex(dat["chain"], dat["quote"])
+                    calls_n = len(dat["chain"].get("calls", []))
+                    puts_n  = len(dat["chain"].get("puts",  []))
+                    per_exp_info.append(f"{time.strftime('%Y-%m-%d', time.gmtime(e))}: calls={calls_n}, puts={puts_n}, rows={len(df_i)}")
+                    if not df_i.empty:
+                        df_i["expiry"] = int(e)
+                        all_rows.append(df_i)
+                        if S_ref is None and S_i is not None:
+                            S_ref = S_i
+                    progress.progress(j/len(picked))
+                    log_box.write("\n".join(per_exp_info))
 
+            if not all_rows:
+                st.warning("По выбранному окну экспираций цепочки пустые (нет строк для расчёта). "
+                           "Попробуй другую дату или тикер.")
+                st.stop()
 
-# === Standalone selection and calculation section (visible whenever expiries are loaded) ===
-exp_dates = st.session_state.get("exp_dates", [])
-if exp_dates:
-    try:
-        human = [time.strftime("%Y-%m-%d", time.gmtime(int(e))) for e in exp_dates]
-    except Exception:
-        human = [str(e) for e in exp_dates]
-    st.session_state.exp_idx = st.selectbox(
-        "Выбери ближайшую экспирацию",
-        list(range(len(exp_dates))),
-        format_func=lambda i: human[i],
-        index=st.session_state.get("exp_idx", 0),
-        key="exp_select_box"
-    )
+            if S_ref is None:
+                q = fetch_quote(ticker)
+                S_ref = q.get("regularMarketPrice")
+            if S_ref is None:
+                st.error("Не удалось определить Spot (regularMarketPrice).")
+                st.stop()
 
-    
-if st.button("Рассчитать уровни (эта + 7 следующих)", key="calc_levels_btn"):
-    try:
-        idx = st.session_state.exp_idx
-        picked = exp_dates[idx: idx + 8]
-        log_box = st.empty()
-        progress = st.progress(0.0)
-        all_rows, S_ref = [], None
-        per_exp_info = []
-        df_selected = None  # цепочка для выбранной (первой) экспирации
+            df_all = pd.concat(all_rows, ignore_index=True)
+            prof   = weight_and_profile(df_all, S=S_ref, h_days=H_EXP, kappa=KAPPA, smooth=SMOOTH)
+            if prof.empty:
+                st.warning("Профиль пуст. Проверь ликвидность и параметры весов/сглаживания.")
+                st.stop()
 
-        with st.spinner("Тянем цепочки и считаем Гамму..."):
-            for j, e in enumerate(picked, start=1):
-                dat = fetch_expiry(st.session_state.ticker_loaded or ticker, int(e))
-                df_i, S_i = compute_chain_gex(dat["chain"], dat["quote"])
-                if j == 1:
-                    df_selected = df_i.copy()
-                calls_n = len(dat["chain"].get("calls", []))
-                puts_n  = len(dat["chain"].get("puts",  []))
-                per_exp_info.append(f"{time.strftime('%Y-%m-%d', time.gmtime(int(e)))}: calls={calls_n}, puts={puts_n}, rows={len(df_i)}")
-                if not df_i.empty:
-                    df_i["expiry"] = int(e)
-                    all_rows.append(df_i)
-                    if S_ref is None and S_i is not None:
-                        S_ref = S_i
-                progress.progress(j / max(1, len(picked)))
-                log_box.write("\n".join(per_exp_info))
+            flips, pos, neg = find_levels(prof)
 
-        if not all_rows:
-            st.warning("По выбранному окну экспираций цепочки пустые (нет строк для расчёта). Попробуй другую дату или тикер.")
-            st.stop()
+            c1, c2 = st.columns([2,1])
+            with c1:
+                title = f"({ticker}, c {time.strftime('%Y-%m-%d', time.gmtime(picked[0]))} по {time.strftime('%Y-%m-%d', time.gmtime(picked[-1]))})"
+                st.plotly_chart(plot_profiles(prof, S=S_ref, flips=flips, pos=pos, neg=neg, title_note=title),
+                                use_container_width=True)
 
-        if S_ref is None:
-            q = fetch_quote(st.session_state.ticker_loaded or ticker)
-            S_ref = q.get("regularMarketPrice")
-        if S_ref is None:
-            st.error("Не удалось определить Spot (regularMarketPrice).")
-            st.stop()
+            def rows(mags, label):
+                return [{"Strike": k, "Magnet": v, "|Magnet|": a, "Side": label} for (k,v,a) in mags]
+            levels = pd.DataFrame(rows(pos, "+") + rows(neg, "-")).sort_values("|Magnet|", ascending=False)
 
-        df_all = pd.concat(all_rows, ignore_index=True)
-        prof   = weight_and_profile(df_all, S=S_ref, h_days=H_EXP, kappa=KAPPA, smooth=SMOOTH)
-        if prof.empty:
-            st.warning("Профиль пуст. Проверь ликвидность и параметры весов/сглаживания.")
-            st.stop()
-
-        flips, pos, neg = find_levels(prof)
-
-        c1, c2 = st.columns([2, 1])
-        with c1:
-            title = f"({st.session_state.ticker_loaded or ticker}, c {time.strftime('%Y-%m-%d', time.gmtime(int(picked[0])))} по {time.strftime('%Y-%m-%d', time.gmtime(int(picked[-1])))} )"
-            st.plotly_chart(
-                plot_profiles(prof, S=S_ref, flips=flips, pos=pos, neg=neg, title_note=title),
-                use_container_width=True
-            )
-
-        def rows(mags, label):
-            return [{"Strike": k, "Magnet": v, "|Magnet|": a, "Side": label} for (k, v, a) in mags]
-        levels = pd.DataFrame(rows(pos, "+") + rows(neg, "-")).sort_values("|Magnet|", ascending=False)
-
-        with c2:
-            st.subheader("Ключевые уровни (магниты)")
-            st.dataframe(levels, use_container_width=True)
-            st.download_button(
-                "Скачать уровни (CSV)",
-                data=levels.to_csv(index=False).encode("utf-8"),
-                file_name=f"{st.session_state.ticker_loaded or ticker}_magnet_levels.csv",
-                mime="text/csv"
-            )
-
-        # --- Таблица Net GEX по страйкам для выбранной экспирации ---
-        if df_selected is not None and not df_selected.empty:
-            df_p = df_selected.copy()
-            df_p["type"] = df_p["type"].str.lower().map({"call":"call","put":"put"})
-            gex_by = df_p.groupby(["strike","type"])["gex_signed"].sum().unstack(fill_value=0.0)
-            for col in ("call","put"):
-                if col not in gex_by.columns:
-                    gex_by[col] = 0.0
-            gex_by = gex_by.rename(columns={"call":"GEX_call","put":"GEX_put"})
-            gex_by["Net_GEX"] = gex_by["GEX_call"] + gex_by["GEX_put"]
-            gex_by["|Net_GEX|"] = gex_by["Net_GEX"].abs()
-            gex_table = gex_by.reset_index().sort_values("strike")
-            st.subheader("Net GEX по страйкам для выбранной экспирации")
-            st.dataframe(gex_table, use_container_width=True)
-            st.download_button(
-                "Скачать Net GEX по страйкам (CSV)",
-                data=gex_table.to_csv(index=False).encode("utf-8"),
-                file_name=f"{st.session_state.ticker_loaded or ticker}_{time.strftime('%Y-%m-%d', time.gmtime(int(picked[0])))}_netgex_by_strike.csv",
-                mime="text/csv"
-            )
-
-
-            # --- Диаграмма Net GEX по страйкам (как на примере MaxPower) ---
-            try:
-                # агрегаты по OI/Volume и Net GEX
-                df_p = df_selected.copy()
-                if "volume" not in df_p.columns:
-                    df_p["volume"] = 0.0  # на случай отсутствия поля в данных
-                grp_gex = df_p.groupby(["strike","type"])["gex_signed"].sum().unstack(fill_value=0.0)
-                grp_oi  = df_p.groupby(["strike","type"])["oi"].sum().unstack(fill_value=0.0)
-                grp_vol = df_p.groupby(["strike","type"])["volume"].sum().unstack(fill_value=0.0)
-
-                for g in (grp_gex, grp_oi, grp_vol):
-                    for col in ("call","put"):
-                        if col not in g.columns:
-                            g[col] = 0.0
-
-                bar_df = grp_gex.rename(columns={"call":"GEX_call","put":"GEX_put"})
-                bar_df["Net_GEX"] = bar_df["GEX_call"] + bar_df["GEX_put"]
-                oi_df  = grp_oi.rename(columns={"call":"Call_OI","put":"Put_OI"})
-                vol_df = grp_vol.rename(columns={"call":"Call_Volume","put":"Put_Volume"})
-
-                merged = bar_df.join(oi_df).join(vol_df).reset_index().sort_values("strike")
-                x = merged["strike"].values
-                y = merged["Net_GEX"].values
-
-                # подготовим customdata для всплывающей подсказки
-                import numpy as np
-                custom = np.stack([
-                    merged["strike"].values,
-                    merged["Call_OI"].values,
-                    merged["Put_OI"].values,
-                    merged["Call_Volume"].values,
-                    merged["Put_Volume"].values,
-                    merged["Net_GEX"].values
-                ], axis=1)
-
-                import plotly.graph_objects as go
-                fig = go.Figure()
-
-                pos_mask = (y >= 0)
-                neg_mask = ~pos_mask
-                fig.add_bar(x=x[pos_mask], y=y[pos_mask], name="Net GEX +", customdata=custom[pos_mask],
-                            hovertemplate=(
-                                "Strike: %{customdata[0]:.0f}<br>" +
-                                "Call OI: %{customdata[1]:,.0f}<br>" +
-                                "Put OI: %{customdata[2]:,.0f}<br>" +
-                                "Call Volume: %{customdata[3]:,.0f}<br>" +
-                                "Put Volume: %{customdata[4]:,.0f}<br>" +
-                                "Net GEX: %{customdata[5]:,.1f}<extra></extra>"
-                            ))
-                fig.add_bar(x=x[neg_mask], y=y[neg_mask], name="Net GEX -", customdata=custom[neg_mask],
-                            hovertemplate=(
-                                "Strike: %{customdata[0]:.0f}<br>" +
-                                "Call OI: %{customdata[1]:,.0f}<br>" +
-                                "Put OI: %{customdata[2]:,.0f}<br>" +
-                                "Call Volume: %{customdata[3]:,.0f}<br>" +
-                                "Put Volume: %{customdata[4]:,.0f}<br>" +
-                                "Net GEX: %{customdata[5]:,.1f}<extra></extra>"
-                            ))
-
-                spot_x = float(S_ref)
-                fig.add_vline(x=spot_x, line_width=2, line_dash="solid")
-                fig.add_annotation(x=spot_x, y=1.02, yref="paper", showarrow=False,
-                                   text=f"Price: {spot_x:.2f}")
-
-                fig.update_layout(
-                    barmode="relative",
-                    showlegend=False,
-                    margin=dict(l=40, r=20, t=30, b=40),
-                    xaxis_title="Strike",
-                    yaxis_title="Net GEX",
-                )
-                st.plotly_chart(fig, use_container_width=True)
-            except Exception as _e:
-                st.info(f"Не удалось построить диаграмму Net GEX по страйкам: {_e}")
+            with c2:
+                st.subheader("Ключевые уровни (магниты)")
+                st.dataframe(levels, use_container_width=True)
+                st.download_button("Скачать уровни (CSV)",
+                                   data=levels.to_csv(index=False).encode("utf-8"),
+                                   file_name=f"{ticker}_magnet_levels.csv",
+                                   mime="text/csv")
 
     except Exception as e:
-        st.error(f"Ошибка расчёта уровней: {e}")
+        st.error(f"Ошибка: {e}")
+        st.info("Открой «Debug: сырой ответ провайдера» и скачай JSON — пришли мне файл, если ошибка повторится.")
