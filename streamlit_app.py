@@ -264,94 +264,6 @@ def plot_profiles(profile: pd.DataFrame, S: float, flips, pos, neg, title_note="
     fig.update_yaxes(fixedrange=True, tickformat=",")
     return fig
 
-
-# ==== Power Zone helpers (added) ====
-import numpy as _np
-
-def _huber_weights(res, delta):
-    r = _np.asarray(res, float)
-    a = _np.abs(r)
-    w = _np.ones_like(a)
-    mask = a > delta
-    w[mask] = delta / (a[mask] + 1e-12)
-    return w
-
-def calibrate_power_zone_params(df, spot, beta_grid=None):
-    """Robust grid search for beta + weighted LS for (a0, a1).
-    Uses Call/Put OI & Volume plus AG; target is normalized total volume
-    (scaled to AG max) so the shape follows liquidity while staying in
-    the same scale as AG for readability.
-    """
-    if beta_grid is None:
-        beta_grid = _np.linspace(0.005, 0.03, 26)  # 0.5%..3% per $ distance
-
-    df = df.copy()
-    # required columns
-    if not set(['AG','Call_OI','Put_OI','Call_Volume','Put_Volume','strike']).issubset(df.columns):
-        return 0.20, 0.12, 0.013  # safe defaults
-
-    ag = _np.nan_to_num(df['AG'].to_numpy(float), nan=0.0, posinf=0.0, neginf=0.0)
-    vol = _np.nan_to_num((df['Call_Volume'] + df['Put_Volume']).to_numpy(float), nan=0.0)
-    oi  = _np.nan_to_num((df['Call_OI'] + df['Put_OI']).to_numpy(float), nan=0.0)
-    v_oi = _np.divide(vol, _np.maximum(oi, 1.0))  # liquidity ratio
-    d = _np.abs(df['strike'].to_numpy(float) - float(spot))
-
-    # target: normalized by its max, but scaled to AG.max so magnitudes are familiar
-    vol_norm = vol / (vol.max() + 1e-9)
-    target = vol_norm * (ag.max() if _np.isfinite(ag.max()) and ag.max() > 0 else 1.0)
-
-    # initial weights emphasise higher AG (bigger hedging impact)
-    W0 = _np.sqrt(_np.maximum(ag, 0))
-    W0 = W0 / (W0.max() + 1e-9)
-
-    best = None  # (sse, a0, a1, beta)
-    for beta in beta_grid:
-        decay = _np.exp(-beta * d)
-        X0 = ag * decay
-        X1 = ag * v_oi * decay
-        X = _np.vstack([X0, X1]).T
-
-        # Weighted LS with Huber re-weighting
-        # Start with base weights
-        w = W0.copy()
-        # Build normal equations iteratively
-        a0 = 0.20; a1 = 0.12
-        for _ in range(3):
-            WX = X * w[:, None]
-            Wy = target * w
-            # Solve (WX^T WX) theta = WX^T Wy
-            XtX = WX.T @ WX + _np.eye(2) * 1e-8
-            Xty = WX.T @ Wy
-            theta = _np.linalg.solve(XtX, Xty)
-            a0, a1 = float(theta[0]), float(theta[1])
-            pred = a0 * X0 + a1 * X1
-            resid = target - pred
-            # Huber weights
-            mad = _np.median(_np.abs(resid - _np.median(resid))) + 1e-9
-            delta = 1.345 * mad
-            w = _huber_weights(resid, delta) * W0
-
-        sse = float(_np.sum((w * (target - (a0*X0 + a1*X1)))**2))
-        if (best is None) or (sse < best[0]):
-            best = (sse, a0, a1, float(beta))
-
-    _, a0b, a1b, betab = best if best else (0.0, 0.20, 0.12, 0.013)
-    return a0b, a1b, betab
-
-def compute_power_zone(df, spot, params=None):
-    if params is None:
-        params = calibrate_power_zone_params(df, spot)
-    a0, a1, beta = params
-    ag = _np.nan_to_num(df['AG'].to_numpy(float), nan=0.0, posinf=0.0, neginf=0.0)
-    vol = _np.nan_to_num((df['Call_Volume'] + df['Put_Volume']).to_numpy(float), nan=0.0)
-    oi  = _np.nan_to_num((df['Call_OI'] + df['Put_OI']).to_numpy(float), nan=0.0)
-    v_oi = _np.divide(vol, _np.maximum(oi, 1.0))
-    d = _np.abs(df['strike'].to_numpy(float) - float(spot))
-    decay = _np.exp(-beta * d)
-    pz = ag * (a0 + a1 * v_oi) * decay
-    return pz
-# ==== end Power Zone helpers (added) ====
-
 # ========== Интерэктив: загрузка и расчёт ==========
 if btn_load:
     try:
@@ -395,13 +307,7 @@ if exp_dates:
                        key="expiry_select_idx")
     st.session_state.exp_idx = idx
 
-    show_ag = st.toggle("Показать абсолютную гамму (AG)
-show_pz = st.toggle('Показать Power Zone', value=False, key='show_pz')
-show_call_oi = st.toggle('Показать Call OI (бар внизу)', value=False, key='show_call_oi')
-show_put_oi = st.toggle('Показать Put OI (бар внизу)', value=False, key='show_put_oi')
-show_call_vol = st.toggle('Показать Call Volume (бар внизу)', value=False, key='show_call_vol')
-show_put_vol = st.toggle('Показать Put Volume (бар внизу)', value=False, key='show_put_vol')
-", value=True)
+    show_ag = st.toggle("Показать абсолютную гамму (AG)", value=True)
 
     if st.button("Рассчитать уровни (эта + 7 следующих)", key="calc_levels_btn"):
         try:
