@@ -350,9 +350,14 @@ if exp_dates:
             per_exp_info = []
 
             with st.spinner("Тянем цепочки и считаем Гамму..."):
+                df_selected = None  # будет хранить цепочку для выбранной экспирации (первой в списке)
+
                 for j, e in enumerate(picked, start=1):
                     dat = fetch_expiry(st.session_state.ticker_loaded or ticker, int(e))
                     df_i, S_i = compute_chain_gex(dat["chain"], dat["quote"])
+                    if j == 1:
+                        df_selected = df_i.copy()
+
                     calls_n = len(dat["chain"].get("calls", []))
                     puts_n  = len(dat["chain"].get("puts",  []))
                     per_exp_info.append(f"{time.strftime('%Y-%m-%d', time.gmtime(int(e)))}: calls={calls_n}, puts={puts_n}, rows={len(df_i)}")
@@ -404,5 +409,29 @@ if exp_dates:
                     file_name=f"{st.session_state.ticker_loaded or ticker}_magnet_levels.csv",
                     mime="text/csv"
                 )
+
+# --- Таблица Net GEX по страйкам для выбранной экспирации ---
+if df_selected is not None and not df_selected.empty:
+    # пивот по типу опциона
+    df_p = df_selected.copy()
+    df_p["type"] = df_p["type"].str.lower().map({"call":"call","put":"put"})
+    gex_by = df_p.groupby(["strike","type"])["gex_signed"].sum().unstack(fill_value=0.0)
+    # гарантируем колонки
+    for col in ("call","put"): 
+        if col not in gex_by.columns: 
+            gex_by[col] = 0.0
+    gex_by = gex_by.rename(columns={"call":"GEX_call","put":"GEX_put"})
+    gex_by["Net_GEX"] = gex_by["GEX_call"] + gex_by["GEX_put"]
+    gex_by["|Net_GEX|"] = gex_by["Net_GEX"].abs()
+    gex_table = gex_by.reset_index().sort_values("strike")
+    st.subheader("Net GEX по страйкам для выбранной экспирации")
+    st.dataframe(gex_table, use_container_width=True)
+    st.download_button(
+        "Скачать Net GEX по страйкам (CSV)",
+        data=gex_table.to_csv(index=False).encode("utf-8"),
+        file_name=f"{st.session_state.ticker_loaded or ticker}_{human[st.session_state.exp_idx]}_netgex_by_strike.csv",
+        mime="text/csv"
+    )
+
         except Exception as e:
             st.error(f"Ошибка расчёта уровней: {e}")
