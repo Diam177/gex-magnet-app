@@ -1,4 +1,4 @@
-# streamlit_app.py (v3_fix3)
+# streamlit_app.py (v3_AG)
 import time, json, io, zipfile
 import requests
 import numpy as np
@@ -45,12 +45,10 @@ def _get(url, params):
     return r.json()
 
 def _norm_top(raw):
-    # если верхний уровень — список, упаковываем в {"body": list}
     return {"body": raw} if isinstance(raw, list) else raw
 
 def _to_sec(x):
-    if x is None:
-        return None
+    if x is None: return None
     try:
         x = int(x)
     except Exception:
@@ -107,19 +105,10 @@ def quote_from_options(raw: dict) -> dict:
             q0 = b0.get("quote") or {}
             if isinstance(q0, dict):
                 for k in ("regularMarketPrice","regularMarketTime"):
-                    if k in q0:
-                        q[k] = q0[k]
+                    if k in q0: q[k] = q0[k]
     return q
 
 def ensure_shape(raw: dict):
-    """
-    Возвращает нормализованную структуру:
-    {
-      "expirationDates": [int(sec), ...],
-      "chains": [ {"expiration": sec, "calls": [...], "puts":[...]}, ... ],
-      "quote": {...}
-    }
-    """
     raw = _norm_top(raw)
     body = raw.get("body")
     quote = quote_from_options(raw)
@@ -128,11 +117,9 @@ def ensure_shape(raw: dict):
 
     if isinstance(body, list) and body:
         b0 = body[0]
-
         exps = b0.get("expirationDates") or b0.get("expirations") or b0.get("dates")
         if isinstance(exps, list):
             expirationDates = [_to_sec(x) for x in exps if _to_sec(x)]
-
         options_list = b0.get("options", [])
         if isinstance(options_list, list):
             for opt in options_list:
@@ -163,7 +150,7 @@ def fetch_expiry(symbol: str, epoch: int):
                     q = shaped.get("quote", {})
                     if "regularMarketPrice" not in q or "regularMarketTime" not in q:
                         q2 = fetch_quote(symbol)
-                        q.update({k: v for k, v in q2.items() if k not in q})
+                        q.update({k:v for k,v in q2.items() if k not in q})
                     if "regularMarketTime" not in q or q["regularMarketTime"] is None:
                         q["regularMarketTime"] = int(time.time())
                     return {"quote": q, "chain": ch}
@@ -174,14 +161,13 @@ def fetch_expiry(symbol: str, epoch: int):
         if shaped.get("chains"):
             ch = shaped["chains"][0]
             q = shaped.get("quote", {})
-            if "regularMarketTime" not in q:
-                q["regularMarketTime"] = int(time.time())
+            if "regularMarketTime" not in q: q["regularMarketTime"] = int(time.time())
             return {"quote": q, "chain": ch}
     return {"quote": {}, "chain": {"expiration": epoch, "calls": [], "puts": []}}
 
 # ========== Математика/методика ==========
 def bsm_gamma(S, K, sigma, tau, r=DEFAULT_R, q=DEFAULT_Q):
-    if not (S and K and sigma and tau) or S <= 0 or K <= 0 or sigma <= 0 or tau <= 0:
+    if not (S and K and sigma and tau) or S<=0 or K<=0 or sigma<=0 or tau<=0:
         return 0.0
     d1 = (np.log(S/K) + (r - q + 0.5*sigma**2)*tau) / (sigma*np.sqrt(tau))
     phi = np.exp(-0.5*d1**2)/np.sqrt(2*np.pi)
@@ -202,7 +188,7 @@ def compute_chain_gex(chain: dict, quote: dict):
             K  = r.get("strike")
             oi = r.get("openInterest", 0) or 0
             iv = r.get("impliedVolatility", 0) or 0
-            if not (K and iv) or K <= 0:
+            if not (K and iv) or K<=0:
                 continue
             gamma = bsm_gamma(S, float(K), float(iv), tau)
             gex   = oi * gamma * 100 * S * sign
@@ -212,8 +198,7 @@ def compute_chain_gex(chain: dict, quote: dict):
     return df, float(S)
 
 def weight_and_profile(df: pd.DataFrame, S: float, h_days: float, kappa: float, smooth: int):
-    if df.empty:
-        return pd.DataFrame()
+    if df.empty: return pd.DataFrame()
     df = df.copy()
     df["W_exp"] = np.exp(-df["tau"]*365.0/h_days)
 
@@ -228,7 +213,7 @@ def weight_and_profile(df: pd.DataFrame, S: float, h_days: float, kappa: float, 
     sig = df["iv"].clip(lower=1e-6)
     root_tau = np.sqrt(df["tau"].clip(lower=1e-9))
     denom = 2.0*(kappa**2)*(sig*root_tau)**2
-    logt = np.log(np.maximum(df["strike"], 1e-6)/max(S, 1e-6))
+    logt = np.log(np.maximum(df["strike"], 1e-6)/max(S,1e-6))
     df["W_dist"] = np.exp(-(logt**2)/np.maximum(denom, 1e-12))
 
     df["W_liq"]  = np.sqrt(df["OI_share"].clip(lower=0))
@@ -243,11 +228,9 @@ def weight_and_profile(df: pd.DataFrame, S: float, h_days: float, kappa: float, 
     return prof
 
 def find_levels(profile: pd.DataFrame):
-    if profile.empty:
-        return [], [], []
+    if profile.empty: return [], [], []
     prof = profile.dropna(subset=["Magnet_smooth"]).copy()
-    if prof.empty:
-        return [], [], []
+    if prof.empty: return [], [], []
     strikes = prof["strike"].values
     vals = prof["Magnet_smooth"].values
     flips = []
@@ -271,7 +254,7 @@ def plot_profiles(profile: pd.DataFrame, S: float, flips, pos, neg, title_note="
     fig.add_vline(x=float(S), line_width=2, line_dash="solid", line_color="#FFA500")
     fig.update_layout(
         title=title_note, showlegend=True,
-        margin=dict(l=40, r=20, t=30, b=40),
+        margin=dict(l=40,r=20,t=30,b=40),
         xaxis_title="Strike", yaxis_title="Value",
         dragmode=False
     )
@@ -315,14 +298,15 @@ if btn_load:
 exp_dates = st.session_state.get("exp_dates", [])
 if exp_dates:
     human = [time.strftime("%Y-%m-%d", time.gmtime(e)) for e in exp_dates]
-    idx = st.selectbox(
-        "Выбери ближайшую экспирацию",
-        list(range(len(exp_dates))),
-        format_func=lambda i: human[i],
-        index=st.session_state.get("exp_idx", 0),
-        key="expiry_select_idx"
-    )
+    idx = st.selectbox("Выбери ближайшую экспирацию",
+                       list(range(len(exp_dates))),
+                       format_func=lambda i: human[i],
+                       index=st.session_state.get("exp_idx", 0),
+                       key="expiry_select_idx")
     st.session_state.exp_idx = idx
+
+    # UI-кнопка/переключатель для наложения Absolute Gamma
+    show_ag = st.toggle("Показать абсолютную гамму (AG)", value=True)
 
     if st.button("Рассчитать уровни (эта + 7 следующих)", key="calc_levels_btn"):
         try:
@@ -349,7 +333,7 @@ if exp_dates:
                     if S_i is not None:
                         S_ref = S_i
                     if not df_i.empty:
-                        df_i["tau"] = df_i["tau"]  # keep for clarity
+                        df_i["expiry"] = int(e)
                         all_rows.append(df_i)
                     progress.progress(j / max(1, len(picked)))
                     log_box.write("\n".join(per_exp_info))
@@ -373,83 +357,62 @@ if exp_dates:
 
             flips, pos, neg = find_levels(prof)
 
-            c1, c2 = st.columns([2, 1])
-            with c1:
-                tk = st.session_state.ticker_loaded or ticker
-                title = (
-                    f"({tk}, c {time.strftime('%Y-%m-%d', time.gmtime(int(picked[0])))} "
-                    f"по {time.strftime('%Y-%m-%d', time.gmtime(int(picked[-1])))} )"
-                )
-                st.plotly_chart(
-                    plot_profiles(prof, S=S_ref, flips=flips, pos=pos, neg=neg, title_note=title),
-                    use_container_width=True
-                )
+            # --- Таблица Net GEX + Absolute Gamma по выбранной экспирации ---
+            c_top, c_chart = st.columns([1, 2])
 
-            def rows(mags, label):
-                return [{"Strike": k, "Magnet": v, "|Magnet|": a, "Side": label} for (k, v, a) in mags]
-
-            level_rows = rows(pos, "+") + rows(neg, "-")
-            levels = pd.DataFrame(level_rows, columns=["Strike","Magnet","|Magnet|","Side"])
-            if levels.empty:
-                st.info("Нет выраженных магнитов по текущим параметрам. Увеличь окно сглаживания или изменяй κ/h.")
-            else:
-                levels = levels.sort_values("|Magnet|", ascending=False).reset_index(drop=True)
-
-            with c2:
-                st.subheader("Ключевые уровни (магниты)")
-                st.dataframe(levels, use_container_width=True)
-                st.download_button(
-                    "Скачать уровни (CSV)",
-                    data=levels.to_csv(index=False).encode("utf-8"),
-                    file_name=f"{st.session_state.ticker_loaded or ticker}_magnet_levels.csv",
-                    mime="text/csv"
-                )
-
-            # --- Таблица Net GEX по страйкам для выбранной экспирации ---
             if df_selected is not None and not df_selected.empty:
                 df_p = df_selected.copy()
                 if "volume" not in df_p.columns:
                     df_p["volume"] = 0.0
-                df_p["type"] = df_p["type"].str.lower().map({"call": "call", "put": "put"})
+                df_p["type"] = df_p["type"].str.lower().map({"call":"call","put":"put"})
 
-                grp_gex = df_p.groupby(["strike", "type"])["gex_signed"].sum().unstack(fill_value=0.0)
-                grp_oi  = df_p.groupby(["strike", "type"])["oi"].sum().unstack(fill_value=0.0)
-                grp_vol = df_p.groupby(["strike", "type"])["volume"].sum().unstack(fill_value=0.0)
+                grp_gex = df_p.groupby(["strike","type"])["gex_signed"].sum().unstack(fill_value=0.0)
+                grp_oi  = df_p.groupby(["strike","type"])["oi"].sum().unstack(fill_value=0.0)
+                grp_vol = df_p.groupby(["strike","type"])["volume"].sum().unstack(fill_value=0.0)
                 for g in (grp_gex, grp_oi, grp_vol):
-                    for col in ("call", "put"):
+                    for col in ("call","put"):
                         if col not in g.columns:
                             g[col] = 0.0
 
-                bar_df = grp_gex.rename(columns={"call": "GEX_call", "put": "GEX_put"})
+                bar_df = grp_gex.rename(columns={"call":"GEX_call","put":"GEX_put"})
                 bar_df["Net_GEX"] = bar_df["GEX_call"] + bar_df["GEX_put"]
-                oi_df  = grp_oi.rename(columns={"call": "Call_OI", "put": "Put_OI"})
-                vol_df = grp_vol.rename(columns={"call": "Call_Volume", "put": "Put_Volume"})
+                # Absolute Gamma per strike (сумма модулей по типам)
+                bar_df["AG"] = bar_df["GEX_call"].abs() + bar_df["GEX_put"].abs()
+
+                oi_df  = grp_oi.rename(columns={"call":"Call_OI","put":"Put_OI"})
+                vol_df = grp_vol.rename(columns={"call":"Call_Volume","put":"Put_Volume"})
                 merged = bar_df.join(oi_df).join(vol_df).reset_index().sort_values("strike")
 
-                gex_table = merged[["strike", "GEX_call", "GEX_put", "Net_GEX"]].copy()
+                # таблица
+                gex_table = merged[["strike", "GEX_call", "GEX_put", "Net_GEX", "AG", "Call_OI", "Put_OI", "Call_Volume", "Put_Volume"]].copy()
                 gex_table["|Net_GEX|"] = gex_table["Net_GEX"].abs()
 
-                st.subheader("Net GEX по страйкам для выбранной экспирации")
-                st.dataframe(gex_table, use_container_width=True)
-                st.download_button(
-                    "Скачать Net GEX по страйкам (CSV)",
-                    data=gex_table.to_csv(index=False).encode("utf-8"),
-                    file_name=f"{st.session_state.ticker_loaded or ticker}_{time.strftime('%Y-%m-%d', time.gmtime(int(picked[0])))}_netgex_by_strike.csv",
-                    mime="text/csv"
-                )
+                with c_top:
+                    st.subheader("Net GEX / Absolute Gamma по страйкам")
+                    st.dataframe(gex_table, use_container_width=True, height=240)
+                    st.download_button(
+                        "Скачать Net GEX по страйкам (CSV)",
+                        data=gex_table.to_csv(index=False).encode("utf-8"),
+                        file_name=f"{st.session_state.ticker_loaded or ticker}_{time.strftime('%Y-%m-%d', time.gmtime(int(picked[0])))}_netgex_by_strike.csv",
+                        mime="text/csv"
+                    )
 
-                # --- Диаграмма Net GEX по страйкам (стилизовано) ---
+                # --- Диаграмма Net GEX по страйкам + AG overlay ---
                 x = merged["strike"].to_numpy()
                 y = merged["Net_GEX"].to_numpy()
+                ag = merged["AG"].to_numpy()
+
                 custom = np.stack([
                     merged["strike"].to_numpy(),
                     merged["Call_OI"].to_numpy(),
                     merged["Put_OI"].to_numpy(),
                     merged["Call_Volume"].to_numpy(),
                     merged["Put_Volume"].to_numpy(),
-                    merged["Net_GEX"].to_numpy()
+                    merged["Net_GEX"].to_numpy(),
+                    merged["AG"].to_numpy()
                 ], axis=1)
 
+                # подрезка "хвостов" по Net GEX (как раньше)
                 abs_y = np.abs(y)
                 if abs_y.size:
                     max_abs = float(abs_y.max())
@@ -458,7 +421,7 @@ if exp_dates:
                     if sig.any():
                         idxs = np.where(sig)[0]
                         i0, i1 = max(0, int(idxs.min())-3), min(len(x)-1, int(idxs.max())+3)
-                        x, y, custom = x[i0:i1+1], y[i0:i1+1], custom[i0:i1+1]
+                        x, y, ag, custom = x[i0:i1+1], y[i0:i1+1], ag[i0:i1+1], custom[i0:i1+1]
 
                 tickvals = x.tolist()
                 ticktext = [str(int(v)) if float(v).is_integer() else f"{v:g}" for v in x]
@@ -467,6 +430,7 @@ if exp_dates:
                 neg_mask = ~pos_mask
 
                 fig = go.Figure()
+                # Bars: Net GEX
                 fig.add_bar(
                     x=x[pos_mask], y=y[pos_mask], name="Net GEX +", customdata=custom[pos_mask],
                     marker_color="#33B5FF",
@@ -492,32 +456,63 @@ if exp_dates:
                     )
                 )
 
+                # Overlay: Absolute Gamma (правый Y)
+                if show_ag and ag.size:
+                    fig.add_trace(go.Scatter(
+                        x=x, y=ag, yaxis="y2", name="AG",
+                        mode="lines+markers",
+                        line=dict(color="#B366FF"),  # фиолетовый
+                        fill="tozeroy",
+                        fillcolor="rgba(179,102,255,0.25)",
+                        line_shape="spline",
+                        hovertemplate=(
+                            "Strike: %{customdata[0]:.1f}<br>"
+                            "Call OI: %{customdata[1]:,.0f}<br>"
+                            "Put OI: %{customdata[2]:,.0f}<br>"
+                            "Call Volume: %{customdata[3]:,.0f}<br>"
+                            "Put Volume: %{customdata[4]:,.0f}<br>"
+                            "AG: %{customdata[6]:,.1f}<extra></extra>"
+                        ),
+                        customdata=custom
+                    ))
+
+                # Spot line + метка без наезда
                 spot_x = float(S_ref)
                 fig.add_vline(x=spot_x, line_width=2, line_dash="solid", line_color="#FFA500")
-                # Place the label so it does not overlap the vline
                 xmin, xmax = float(np.min(x)), float(np.max(x))
                 mid = 0.5*(xmin + xmax)
-                if spot_x <= mid:
-                    _xanchor, _xshift = 'left', 8
-                else:
-                    _xanchor, _xshift = 'right', -8
-                fig.add_annotation(x=spot_x, y=1.02, xref='x', yref='paper', showarrow=False,
+                _xanchor, _xshift = ('left', 8) if spot_x <= mid else ('right', -8)
+                fig.add_annotation(x=spot_x, y=1.02, xref="x", yref="paper", showarrow=False,
                                    xanchor=_xanchor, xshift=_xshift,
                                    text=f"Price: {spot_x:.2f}", font=dict(color="#FFA500"))
 
+                # Layout
                 ymax = float(np.abs(y).max()) if y.size else 0.0
+                y2max = float(np.max(ag)) if ag.size else 0.0
+
                 fig.update_layout(
                     barmode="relative",
-                    showlegend=False,
-                    margin=dict(l=40, r=20, t=30, b=40),
+                    showlegend=True,
+                    legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1),
+                    margin=dict(l=40, r=40, t=40, b=40),
                     xaxis_title="Strike",
                     yaxis_title="Net GEX",
                     dragmode=False,
+                    yaxis2=dict(
+                        title="AG",
+                        overlaying="y",
+                        side="right",
+                        showgrid=False,
+                        tickformat=","
+                    ),
                 )
                 fig.update_xaxes(tickmode="array", tickvals=tickvals, ticktext=ticktext, tickangle=0)
                 fig.update_xaxes(fixedrange=True)
                 if ymax > 0:
                     fig.update_yaxes(range=[-1.2*ymax, 1.2*ymax])
+                if y2max > 0:
+                    fig.update_layout(yaxis2=dict(range=[0, 1.2*y2max], title="AG", overlaying="y", side="right", showgrid=False, tickformat=","))
+
                 fig.update_yaxes(fixedrange=True, tickformat=",")
                 st.plotly_chart(fig, use_container_width=True, config={"displayModeBar": False, "scrollZoom": False})
 
@@ -533,10 +528,6 @@ if exp_dates:
                             zf.writestr("netgex_by_strike.csv", gex_table.to_csv(index=False))
                         except Exception:
                             pass
-                        try:
-                            zf.writestr("magnet_levels.csv", levels.to_csv(index=False))
-                        except Exception:
-                            pass
                     st.download_button(
                         "Скачать debug.zip",
                         data=buf.getvalue(),
@@ -545,6 +536,16 @@ if exp_dates:
                     )
                 except Exception:
                     pass
+
+            # График профиля (как был) — ниже/выше можно оставить по желанию,
+            # но сейчас основные акценты на Net GEX + AG сделаны.
+            tk = st.session_state.ticker_loaded or ticker
+            title = (
+                f"({tk}, c {time.strftime('%Y-%m-%d', time.gmtime(int(picked[0])))} "
+                f"по {time.strftime('%Y-%m-%d', time.gmtime(int(picked[-1])))} )"
+            )
+            prof_fig = plot_profiles(prof, S=S_ref, flips=flips, pos=pos, neg=neg, title_note=title)
+            st.plotly_chart(prof_fig, use_container_width=True)
 
         except Exception as e:
             st.error(f"Ошибка расчёта уровней: {e}")
