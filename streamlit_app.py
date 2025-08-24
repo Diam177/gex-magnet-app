@@ -1,5 +1,4 @@
 # streamlit_app.py (v3_AG_vol)
-FIG_HEIGHT = 675
 import time, json, io, zipfile
 import requests
 import numpy as np
@@ -426,111 +425,94 @@ if exp_dates:
                 tickvals = x.tolist()
                 ticktext = [str(int(v)) if float(v).is_integer() else f"{v:g}" for v in x]
 
-                # --- восстановление данных графика при перерисовке ---
-                if 'plot_data' in st.session_state:
-                    _pd = st.session_state['plot_data']
-                    try:
-                        import numpy as np
-                        x = np.array(_pd['x']); y = np.array(_pd['y'])
-                        ag = np.array(_pd.get('ag', []))
-                        custom = np.array(_pd['custom'])
-                        tickvals = _pd['tickvals']; ticktext = _pd['ticktext']
-                        S_ref = float(_pd['S_ref'])
-                    except Exception:
-                        pass
-                
                 pos_mask = (y >= 0)
                 neg_mask = ~pos_mask
-                
-                # ---- Панель переключателей ----
-                cols = st.columns(8)
-                with cols[0]:
-                    show_pos = st.toggle('Net GEX +', value=True, key='show_pos')
-                with cols[1]:
-                    show_neg = st.toggle('Net GEX -', value=True, key='show_neg')
-                with cols[2]:
-                    show_ag = st.toggle('AG', value=True, key='show_ag_plot')
-                with cols[3]: st.button('Call OI', disabled=True)
-                with cols[4]: st.button('Put OI', disabled=True)
-                with cols[5]: st.button('Call Volume', disabled=True)
-                with cols[6]: st.button('Put Volume', disabled=True)
-                with cols[7]: st.button('MAX Power', disabled=True)
-                
+
                 fig = go.Figure()
-                if show_pos:
-                    fig.add_bar(
-                        x=x[pos_mask], y=y[pos_mask], name='Net GEX +', customdata=custom[pos_mask],
-                        marker_color='#33B5FF',
-                        hovertemplate=(
-                            'Strike: %{customdata[0]:.0f}<br>'
-                            'Call OI: %{customdata[1]:,.0f}<br>'
-                            'Put OI: %{customdata[2]:,.0f}<br>'
-                            'Call Volume: %{customdata[3]:,.0f}<br>'
-                            'Put Volume: %{customdata[4]:,.0f}<br>'
-                            'Net GEX: %{customdata[5]:,.1f}<extra></extra>'
-                        )
+                fig.add_bar(
+                    x=x[pos_mask], y=y[pos_mask], name="Net GEX +", customdata=custom[pos_mask],
+                    marker_color="#33B5FF",
+                    hovertemplate=(
+                        "Strike: %{customdata[0]:.0f}<br>"
+                        "Call OI: %{customdata[1]:,.0f}<br>"
+                        "Put OI: %{customdata[2]:,.0f}<br>"
+                        "Call Volume: %{customdata[3]:,.0f}<br>"
+                        "Put Volume: %{customdata[4]:,.0f}<br>"
+                        "Net GEX: %{customdata[5]:,.1f}<extra></extra>"
                     )
-                if show_neg:
-                    fig.add_bar(
-                        x=x[neg_mask], y=y[neg_mask], name='Net GEX -', customdata=custom[neg_mask],
-                        marker_color='#FF3B30',
-                        hovertemplate=(
-                            'Strike: %{customdata[0]:.0f}<br>'
-                            'Call OI: %{customdata[1]:,.0f}<br>'
-                            'Put OI: %{customdata[2]:,.0f}<br>'
-                            'Call Volume: %{customdata[3]:,.0f}<br>'
-                            'Put Volume: %{customdata[4]:,.0f}<br>'
-                            'Net GEX: %{customdata[5]:,.1f}<extra></extra>'
-                        )
+                )
+                fig.add_bar(
+                    x=x[neg_mask], y=y[neg_mask], name="Net GEX -", customdata=custom[neg_mask],
+                    marker_color="#FF3B30",
+                    hovertemplate=(
+                        "Strike: %{customdata[0]:.0f}<br>"
+                        "Call OI: %{customdata[1]:,.0f}<br>"
+                        "Put OI: %{customdata[2]:,.0f}<br>"
+                        "Call Volume: %{customdata[3]:,.0f}<br>"
+                        "Put Volume: %{customdata[4]:,.0f}<br>"
+                        "Net GEX: %{customdata[5]:,.1f}<extra></extra>"
                     )
-                
-                # Линия текущей цены + подпись сверху
-                fig.add_vline(x=float(S_ref), line_width=2, line_dash='solid', line_color='#FFA500')
-                fig.add_annotation(x=float(S_ref), y=1.02, xref='x', yref='paper',
-                    text=f'Price: {S_ref:.2f}', showarrow=False, xanchor='center',
-                    yanchor='bottom', font=dict(color='#FFA500'))
-                
-                # AG линия
+                )
+
                 if show_ag and ag.size:
                     fig.add_trace(go.Scatter(
-                        x=x, y=ag, yaxis='y2', name='AG', mode='lines+markers',
-                        customdata=custom, line=dict(color='#B366FF'), fill='tozeroy',
-                        fillcolor='rgba(179,102,255,0.25)', line_shape='spline', cliponaxis=True,
+                        x=x, y=ag, yaxis="y2", name="AG",
+                        mode="lines+markers",
+                        line=dict(color="#B366FF"),
+                        fill="tozeroy",
+                        fillcolor="rgba(179,102,255,0.25)",
+                        line_shape="spline",
                         hovertemplate=(
-                            'Strike: %{x:.1f}<br>'
-                            'Call OI: %{customdata[1]:,.0f}<br>'
-                            'Put OI: %{customdata[2]:,.0f}<br>'
-                            'Call Volume: %{customdata[3]:,.0f}<br>'
-                            'Put Volume: %{customdata[4]:,.0f}<br>'
-                            'AG: %{y:,.1f}<extra></extra>'
-                        )
+                            "Strike: %{customdata[0]:.1f}<br>"
+                            "Call OI: %{customdata[1]:,.0f}<br>"
+                            "Put OI: %{customdata[2]:,.0f}<br>"
+                            "Call Volume: %{customdata[3]:,.0f}<br>"
+                            "Put Volume: %{customdata[4]:,.0f}<br>"
+                            "AG: %{customdata[6]:,.1f}<extra></extra>"
+                        ),
+                        customdata=custom
                     ))
-                
-                # Оси и размеры
+
+                spot_x = float(S_ref)
+                fig.add_vline(x=spot_x, line_width=2, line_dash="solid", line_color="#FFA500")
+                xmin, xmax = float(np.min(x)), float(np.max(x))
+                mid = 0.5*(xmin + xmax)
+                _xanchor, _xshift = ('left', 8) if spot_x <= mid else ('right', -8)
+                fig.add_annotation(x=spot_x, y=1.02, xref="x", yref="paper", showarrow=False,
+                                   xanchor=_xanchor, xshift=_xshift,
+                                   text=f"Price: {spot_x:.2f}", font=dict(color="#FFA500"))
+
                 ymax = float(np.abs(y).max()) if y.size else 0.0
-                fig.update_layout(barmode='relative', height=FIG_HEIGHT, showlegend=True,
-                    legend=dict(orientation='h', yanchor='bottom', y=1.02, xanchor='right', x=1),
-                    margin=dict(l=40, r=40, t=40, b=40), xaxis_title='Strike', yaxis_title='Net GEX', dragmode=False)
-                fig.update_xaxes(tickmode='array', tickvals=tickvals, ticktext=ticktext, tickangle=0, fixedrange=True)
-                fig.update_yaxes(fixedrange=True, tickformat=',')
-                if ymax > 0:
-                    fig.update_yaxes(range=[-1.1*ymax, 1.1*ymax])
-                
-                # Правая ось только при AG
-                if show_ag and ag.size:
-                    y2min = float(np.min(ag)); y2max = float(np.max(ag))
-                    pad2 = 0.1 * (y2max - y2min) if y2max > y2min else abs(y2max) * 0.1
-                    fig.update_layout(yaxis2=dict(title='AG', overlaying='y', side='right', showgrid=False, tickformat=',',
-                                                  range=[y2min - pad2, y2max + pad2], fixedrange=True))
-                
-                # Сохраняем данные для перерисовок
-                try:
-                    st.session_state['plot_data'] = {
-                        'x': x.tolist(), 'y': y.tolist(), 'ag': ag.tolist() if hasattr(ag, 'tolist') else [],
-                        'custom': custom.tolist(), 'tickvals': tickvals, 'ticktext': ticktext, 'S_ref': float(S_ref),
-                    }
-                except Exception:
-                    pass
+                y2max = float(np.max(ag)) if ag.size else 0.0
+
+                fig.update_layout(
+                    barmode="relative",
+                    showlegend=True,
+                    legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1),
+                    margin=dict(l=40, r=40, t=40, b=40),
+                    xaxis_title="Strike",
+                    yaxis_title="Net GEX",
+                    dragmode=False,
+                    yaxis2=dict(
+                        title="AG",
+                        overlaying="y",
+                        side="right",
+                        showgrid=False,
+                        tickformat=","
+                    ),
+                )
+                fig.update_xaxes(tickmode="array", tickvals=tickvals, ticktext=ticktext, tickangle=0)
+                fig.update_xaxes(fixedrange=True)
+                # динамический диапазон Y с учётом min/max и отступа
+                ymin = float(y.min()) if y.size else 0.0
+                ymax = float(y.max()) if y.size else 0.0
+                if y.size:
+                    pad = 0.1 * (ymax - ymin) if ymax > ymin else abs(ymax)*0.1
+                    fig.update_yaxes(range=[ymin - pad, ymax + pad])
+                if y2max > 0:
+                    fig.update_layout(yaxis2=dict(range=[0, 1.2*y2max], title="AG", overlaying="y", side="right", showgrid=False, tickformat=","))
+
+                fig.update_yaxes(fixedrange=True, tickformat=",")
                 st.plotly_chart(fig, use_container_width=True, config={"displayModeBar": False, "scrollZoom": False})
 
                 # Кнопка для скачивания debug.zip
