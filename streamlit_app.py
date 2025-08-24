@@ -430,83 +430,81 @@ if st.button("Рассчитать уровни (эта + 7 следующих)"
                 mime="text/csv"
             )
 
-# --- Диаграмма Net GEX по страйкам (как на примере MaxPower) ---
-try:
-    # агрегаты по OI/Volume и Net GEX
-    df_p = df_selected.copy()
-    if "volume" not in df_p.columns:
-        df_p["volume"] = 0.0  # на случай отсутствия поля в данных
-    grp_gex = df_p.groupby(["strike","type"])["gex_signed"].sum().unstack(fill_value=0.0)
-    grp_oi  = df_p.groupby(["strike","type"])["oi"].sum().unstack(fill_value=0.0)
-    grp_vol = df_p.groupby(["strike","type"])["volume"].sum().unstack(fill_value=0.0)
 
-    for g in (grp_gex, grp_oi, grp_vol):
-        for col in ("call","put"):
-            if col not in g.columns:
-                g[col] = 0.0
+            # --- Диаграмма Net GEX по страйкам (как на примере MaxPower) ---
+            try:
+                # агрегаты по OI/Volume и Net GEX
+                df_p = df_selected.copy()
+                if "volume" not in df_p.columns:
+                    df_p["volume"] = 0.0  # на случай отсутствия поля в данных
+                grp_gex = df_p.groupby(["strike","type"])["gex_signed"].sum().unstack(fill_value=0.0)
+                grp_oi  = df_p.groupby(["strike","type"])["oi"].sum().unstack(fill_value=0.0)
+                grp_vol = df_p.groupby(["strike","type"])["volume"].sum().unstack(fill_value=0.0)
 
-    bar_df = grp_gex.rename(columns={"call":"GEX_call","put":"GEX_put"})
-    bar_df["Net_GEX"] = bar_df["GEX_call"] + bar_df["GEX_put"]
-    oi_df  = grp_oi.rename(columns={"call":"Call_OI","put":"Put_OI"})
-    vol_df = grp_vol.rename(columns={"call":"Call_Volume","put":"Put_Volume"})
+                for g in (grp_gex, grp_oi, grp_vol):
+                    for col in ("call","put"):
+                        if col not in g.columns:
+                            g[col] = 0.0
 
-    merged = bar_df.join(oi_df).join(vol_df).reset_index().sort_values("strike")
-    x = merged["strike"].values
-    y = merged["Net_GEX"].values
+                bar_df = grp_gex.rename(columns={"call":"GEX_call","put":"GEX_put"})
+                bar_df["Net_GEX"] = bar_df["GEX_call"] + bar_df["GEX_put"]
+                oi_df  = grp_oi.rename(columns={"call":"Call_OI","put":"Put_OI"})
+                vol_df = grp_vol.rename(columns={"call":"Call_Volume","put":"Put_Volume"})
 
-    # подготовим customdata для всплывающей подсказки
-    import numpy as np
-    custom = np.stack([
-        merged["strike"].values,
-        merged["Call_OI"].values,
-        merged["Put_OI"].values,
-        merged["Call_Volume"].values,
-        merged["Put_Volume"].values,
-        merged["Net_GEX"].values
-    ], axis=1)
+                merged = bar_df.join(oi_df).join(vol_df).reset_index().sort_values("strike")
+                x = merged["strike"].values
+                y = merged["Net_GEX"].values
 
-    import plotly.graph_objects as go
-    fig = go.Figure()
+                # подготовим customdata для всплывающей подсказки
+                import numpy as np
+                custom = np.stack([
+                    merged["strike"].values,
+                    merged["Call_OI"].values,
+                    merged["Put_OI"].values,
+                    merged["Call_Volume"].values,
+                    merged["Put_Volume"].values,
+                    merged["Net_GEX"].values
+                ], axis=1)
 
-    # отдельные следы для положительных и отрицательных значений (цвета как на примере)
-    pos_mask = (y >= 0)
-    neg_mask = ~pos_mask
-    fig.add_bar(x=x[pos_mask], y=y[pos_mask], name="Net GEX +", customdata=custom[pos_mask],
-                hovertemplate=(
-                    "Strike: %{customdata[0]:.0f}<br>" +
-                    "Call OI: %{customdata[1]:,.0f}<br>" +
-                    "Put OI: %{customdata[2]:,.0f}<br>" +
-                    "Call Volume: %{customdata[3]:,.0f}<br>" +
-                    "Put Volume: %{customdata[4]:,.0f}<br>" +
-                    "Net GEX: %{customdata[5]:,.1f}<extra></extra>"
-                ))
-    fig.add_bar(x=x[neg_mask], y=y[neg_mask], name="Net GEX -", customdata=custom[neg_mask],
-                hovertemplate=(
-                    "Strike: %{customdata[0]:.0f}<br>" +
-                    "Call OI: %{customdata[1]:,.0f}<br>" +
-                    "Put OI: %{customdata[2]:,.0f}<br>" +
-                    "Call Volume: %{customdata[3]:,.0f}<br>" +
-                    "Put Volume: %{customdata[4]:,.0f}<br>" +
-                    "Net GEX: %{customdata[5]:,.1f}<extra></extra>"
-                ))
+                import plotly.graph_objects as go
+                fig = go.Figure()
 
-    # вертикальная линия спота и подпись
-    spot_x = float(S_ref)
-    fig.add_vline(x=spot_x, line_width=2, line_dash="solid")
-    fig.add_annotation(x=spot_x, y=1.02, yref="paper", showarrow=False,
-                       text=f"Price: {spot_x:.2f}")
+                pos_mask = (y >= 0)
+                neg_mask = ~pos_mask
+                fig.add_bar(x=x[pos_mask], y=y[pos_mask], name="Net GEX +", customdata=custom[pos_mask],
+                            hovertemplate=(
+                                "Strike: %{customdata[0]:.0f}<br>" +
+                                "Call OI: %{customdata[1]:,.0f}<br>" +
+                                "Put OI: %{customdata[2]:,.0f}<br>" +
+                                "Call Volume: %{customdata[3]:,.0f}<br>" +
+                                "Put Volume: %{customdata[4]:,.0f}<br>" +
+                                "Net GEX: %{customdata[5]:,.1f}<extra></extra>"
+                            ))
+                fig.add_bar(x=x[neg_mask], y=y[neg_mask], name="Net GEX -", customdata=custom[neg_mask],
+                            hovertemplate=(
+                                "Strike: %{customdata[0]:.0f}<br>" +
+                                "Call OI: %{customdata[1]:,.0f}<br>" +
+                                "Put OI: %{customdata[2]:,.0f}<br>" +
+                                "Call Volume: %{customdata[3]:,.0f}<br>" +
+                                "Put Volume: %{customdata[4]:,.0f}<br>" +
+                                "Net GEX: %{customdata[5]:,.1f}<extra></extra>"
+                            ))
 
-    fig.update_layout(
-        barmode="relative",
-        showlegend=False,
-        margin=dict(l=40, r=20, t=30, b=40),
-        xaxis_title="Strike",
-        yaxis_title="Net GEX",
-    )
-    st.plotly_chart(fig, use_container_width=True)
-except Exception as _e:
-    st.info(f"Не удалось построить диаграмму Net GEX по страйкам: {_e}")
+                spot_x = float(S_ref)
+                fig.add_vline(x=spot_x, line_width=2, line_dash="solid")
+                fig.add_annotation(x=spot_x, y=1.02, yref="paper", showarrow=False,
+                                   text=f"Price: {spot_x:.2f}")
 
+                fig.update_layout(
+                    barmode="relative",
+                    showlegend=False,
+                    margin=dict(l=40, r=20, t=30, b=40),
+                    xaxis_title="Strike",
+                    yaxis_title="Net GEX",
+                )
+                st.plotly_chart(fig, use_container_width=True)
+            except Exception as _e:
+                st.info(f"Не удалось построить диаграмму Net GEX по страйкам: {_e}")
 
     except Exception as e:
         st.error(f"Ошибка расчёта уровней: {e}")
