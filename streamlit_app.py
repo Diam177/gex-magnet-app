@@ -6,6 +6,30 @@ import pandas as pd
 import plotly.graph_objects as go
 import streamlit as st
 
+# --- helper for scaling series to the right y-axis height ---
+def _scale_to_y2(arr, top):
+    import numpy as _np
+    if arr is None:
+        return None
+    try:
+        arr = _np.asarray(arr, dtype=float)
+    except Exception:
+        return arr
+    if arr.size == 0:
+        return arr
+    m = float(_np.nanmax(arr))
+    if not _np.isfinite(m) or m <= 0 or top is None:
+        return arr
+    try:
+        top_val = float(top)
+    except Exception:
+        return arr
+    if not _np.isfinite(top_val) or top_val <= 0:
+        return arr
+    return arr * (top_val / m)
+
+
+
 # ========== UI ==========
 st.set_page_config(page_title="GEX Levels & Magnet Profile", layout="wide")
 st.title("GEX Levels & Magnet Profile (по комбинированной методике)")
@@ -518,20 +542,6 @@ if exp_dates:
                         if _arr.size:
                             y2_candidates.append(_arr)
                 y2max = float(np.max([np.max(a) for a in y2_candidates])) if y2_candidates else 0.0
-
-                # helper: scale series to the right axis height so they are visible with AG
-                def _scale_to_y2(arr, top):
-                    import numpy as _np
-                    if arr is None:
-                        return None
-                    if isinstance(arr, list):
-                        arr = _np.array(arr)
-                    if arr.size == 0:
-                        return arr
-                    m = float(_np.max(arr))
-                    if m <= 0 or top <= 0:
-                        return arr
-                    return arr * (top / m)
 
 
                 fig.update_layout(
