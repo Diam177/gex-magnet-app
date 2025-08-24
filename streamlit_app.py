@@ -497,6 +497,20 @@ if exp_dates:
                         customdata=custom
                     ))
 
+                # --- Настройка правой оси: по умолчанию OI/Volume; если AG выбран и кратно больше — AG ---
+                y2_ag_max = float(np.max(ag)) if (show_ag and ag.size) else 0.0
+                _cand = []
+                for _col in ["Call_OI", "Put_OI", "Call_Volume", "Put_Volume"]:
+                    if _col in merged.columns:
+                        _a = merged[_col].to_numpy()
+                        if _a.size:
+                            _cand.append(_a)
+                y2_oi_vol_max = float(np.max([np.max(a) for a in _cand])) if _cand else 0.0
+                # если AG хотя бы в 3 раза больше — выбираем шкалу AG
+                _use_ag_axis = (y2_ag_max > 0 and y2_ag_max >= 3.0 * max(y2_oi_vol_max, 1e-9))
+                y2max = y2_ag_max if _use_ag_axis else y2_oi_vol_max
+                y2_title = "AG" if _use_ag_axis else "OI / Volume"
+
                 # масштабы осей перед оверлеями
                 ymax = float(np.abs(y).max()) if y.size else 0.0
                 y2_candidates = []
@@ -516,22 +530,22 @@ if exp_dates:
                 put_vol  = merged["Put_Volume"].to_numpy()  if "Put_Volume"  in merged.columns else None
                 if call_oi is not None:
                     fig.add_trace(go.Scatter(
-                        x=x, y=_scale_to_y2(call_oi, y2max), yaxis="y2", name="Call OI",
+                        x=x, y=call_oi, yaxis="y2", name="Call OI",
                         mode="lines", line=dict(width=2, color="#1ABC9C")
                     ))
                 if put_oi is not None:
                     fig.add_trace(go.Scatter(
-                        x=x, y=_scale_to_y2(put_oi, y2max), yaxis="y2", name="Put OI",
+                        x=x, y=put_oi, yaxis="y2", name="Put OI",
                         mode="lines", line=dict(width=2, color="#F39C12")
                     ))
                 if call_vol is not None:
                     fig.add_trace(go.Scatter(
-                        x=x, y=_scale_to_y2(call_vol, y2max), yaxis="y2", name="Call Volume",
+                        x=x, y=call_vol, yaxis="y2", name="Call Volume",
                         mode="lines", line=dict(width=1, dash="dot", color="#95A5A6")
                     ))
                 if put_vol is not None:
                     fig.add_trace(go.Scatter(
-                        x=x, y=_scale_to_y2(put_vol, y2max), yaxis="y2", name="Put Volume",
+                        x=x, y=put_vol, yaxis="y2", name="Put Volume",
                         mode="lines", line=dict(width=1, dash="dot", color="#E91E63")
                     ))
 
@@ -568,20 +582,14 @@ if exp_dates:
                     xaxis_title="Strike",
                     yaxis_title="Net GEX",
                     dragmode=False,
-                    yaxis2=dict(
-                        title="AG / OI / Volume",
-                        overlaying="y",
-                        side="right",
-                        showgrid=False,
-                        tickformat=","
-                    ),
+                    yaxis2=dict(title=y2_title, overlaying="y", side="right", showgrid=False, tickformat=","),
                 )
                 fig.update_xaxes(tickmode="array", tickvals=tickvals, ticktext=ticktext, tickangle=0)
                 fig.update_xaxes(fixedrange=True)
                 if ymax > 0:
                     fig.update_yaxes(range=[-1.2*ymax, 1.2*ymax])
                 if y2max > 0:
-                    fig.update_layout(yaxis2=dict(range=[0, 1.2*y2max], title="AG / OI / Volume", overlaying="y", side="right", showgrid=False, tickformat=","))
+                    fig.update_layout(yaxis2=dict(range=[0, 1.2*y2max], title=y2_title, overlaying="y", side="right", showgrid=False, tickformat=","))
 
                 fig.update_yaxes(fixedrange=True, tickformat=",")
                 st.plotly_chart(fig, use_container_width=True, config={"displayModeBar": False, "scrollZoom": False})
