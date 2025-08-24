@@ -51,6 +51,18 @@ with st.sidebar:
     ticker = st.text_input("Тикер", value="SPY").strip().upper()
     btn_load = st.button("Загрузить экспирации")
     with st.expander("Параметры методики", expanded=False):
+
+    # ---- Отображение ----
+    st.markdown("**Отображение**")
+    col_vis1, col_vis2, col_vis3 = st.columns(3)
+    with col_vis1:
+        show_call_oi = st.checkbox("Call OI", value=False)
+        show_put_oi  = st.checkbox("Put OI", value=False)
+    with col_vis2:
+        show_call_vol = st.checkbox("Call Volume", value=False)
+        show_put_vol  = st.checkbox("Put Volume", value=False)
+    with col_vis3:
+        right_axis_mode = "Auto"
         H_EXP   = st.slider("h (вес экспирации, дней)", 3.0, 14.0, 7.0, 0.5)
         KAPPA   = st.slider("κ (достижимость)", 0.5, 2.0, 1.0, 0.1)
         SMOOTH  = st.select_slider("Сглаживание по страйку (оконный размер)", options=[1,3,5,7], value=3)
@@ -331,7 +343,7 @@ if exp_dates:
                        key="expiry_select_idx")
     st.session_state.exp_idx = idx
 
-    show_ag = st.toggle("Показать абсолютную гамму (AG)", value=True)
+    show_ag = st.toggle("Показать абсолютную гамму (AG)", value=False)
 
     if st.button("Рассчитать уровни (эта + 7 следующих)", key="calc_levels_btn"):
         try:
@@ -497,6 +509,36 @@ if exp_dates:
                         customdata=custom
                     ))
 
+                                # --- Решение по правой оси на основании выбора (Auto) ---
+                y2_ag_max = float(np.max(ag)) if (show_ag and ag.size) else 0.0
+                sel = []
+                if show_call_oi and "Call_OI" in merged.columns:
+                    sel.append(merged["Call_OI"].to_numpy())
+                if show_put_oi and "Put_OI" in merged.columns:
+                    sel.append(merged["Put_OI"].to_numpy())
+                if show_call_vol and "Call_Volume" in merged.columns:
+                    sel.append(merged["Call_Volume"].to_numpy())
+                if show_put_vol and "Put_Volume" in merged.columns:
+                    sel.append(merged["Put_Volume"].to_numpy())
+                y2_oi_vol_max = float(np.max([np.max(a) for a in sel])) if sel else 0.0
+                # Правила:
+                if show_ag and not (show_call_oi or show_put_oi or show_call_vol or show_put_vol):
+                    y2_title, y2max = "AG", y2_ag_max
+                elif (show_call_oi or show_put_oi or show_call_vol or show_put_vol) and not show_ag:
+                    y2_title, y2max = "OI / Volume", y2_oi_vol_max
+                elif show_ag and (show_call_oi or show_put_oi or show_call_vol or show_put_vol):
+                    # обе группы выбраны — берём большую шкалу
+                    if y2_ag_max >= y2_oi_vol_max:
+                        y2_title, y2max = "AG", y2_ag_max
+                    else:
+                        y2_title, y2max = "OI / Volume", y2_oi_vol_max
+                else:
+                    # ничего не выбрано справа
+                    y2_title, y2max = " ", 0.0
+
+                if y2max <= 0:
+                    y2max = 1.0
+
                 # --- Настройка правой оси: по умолчанию OI/Volume; если AG выбран и кратно больше — AG ---
                 y2_ag_max = float(np.max(ag)) if (show_ag and ag.size) else 0.0
                 _cand = []
@@ -528,25 +570,29 @@ if exp_dates:
                 put_oi   = merged["Put_OI"].to_numpy()      if "Put_OI"      in merged.columns else None
                 call_vol = merged["Call_Volume"].to_numpy() if "Call_Volume" in merged.columns else None
                 put_vol  = merged["Put_Volume"].to_numpy()  if "Put_Volume"  in merged.columns else None
-                if call_oi is not None:
+                if show_call_oi and call_oi is not None:
                     fig.add_trace(go.Scatter(
                         x=x, y=call_oi, yaxis="y2", name="Call OI",
-                        mode="lines", line=dict(width=2, color="#1ABC9C")
+                        mode="lines+markers", line=dict(width=2, color="#2ECC71"),
+                        fill="tozeroy", fillcolor="rgba(46,204,113,0.20)", line_shape="spline"
                     ))
-                if put_oi is not None:
+                if show_put_oi and put_oi is not None:
                     fig.add_trace(go.Scatter(
                         x=x, y=put_oi, yaxis="y2", name="Put OI",
-                        mode="lines", line=dict(width=2, color="#F39C12")
+                        mode="lines+markers", line=dict(width=2, color="#E74C3C"),
+                        fill="tozeroy", fillcolor="rgba(231,76,60,0.20)", line_shape="spline"
                     ))
-                if call_vol is not None:
+                if show_call_vol and call_vol is not None:
                     fig.add_trace(go.Scatter(
                         x=x, y=call_vol, yaxis="y2", name="Call Volume",
-                        mode="lines", line=dict(width=1, dash="dot", color="#95A5A6")
+                        mode="lines+markers", line=dict(width=2, color="#2D5BFF"),
+                        fill="tozeroy", fillcolor="rgba(45,91,255,0.20)", line_shape="spline"
                     ))
-                if put_vol is not None:
+                if show_put_vol and put_vol is not None:
                     fig.add_trace(go.Scatter(
                         x=x, y=put_vol, yaxis="y2", name="Put Volume",
-                        mode="lines", line=dict(width=1, dash="dot", color="#E91E63")
+                        mode="lines+markers", line=dict(width=2, color="#E67E22"),
+                        fill="tozeroy", fillcolor="rgba(230,126,34,0.20)", line_shape="spline"
                     ))
 
 
@@ -590,6 +636,8 @@ if exp_dates:
                     fig.update_yaxes(range=[-1.2*ymax, 1.2*ymax])
                 if y2max > 0:
                     fig.update_layout(yaxis2=dict(range=[0, 1.2*y2max], title=y2_title, overlaying="y", side="right", showgrid=False, tickformat=","))
+                else:
+                    fig.update_layout(yaxis2=dict(title=" ", overlaying="y", side="right", showgrid=False, tickformat=","))
 
                 fig.update_yaxes(fixedrange=True, tickformat=",")
                 st.plotly_chart(fig, use_container_width=True, config={"displayModeBar": False, "scrollZoom": False})
