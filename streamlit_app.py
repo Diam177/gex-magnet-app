@@ -314,18 +314,15 @@ if btn_load:
             st.stop()
 
 
-# Save to session state and show instruction
-st.session_state.raw_listing = raw
-st.session_state.exp_dates = exp_dates
-st.session_state.ticker_loaded = ticker
-st.session_state.exp_idx = 0
-st.success(f"Экспирации загружены для {ticker} — выбери дату слева и нажми «Рассчитать уровни…».")
-
-
+        # Save to session state and show instruction
+        st.session_state.raw_listing = raw
+        st.session_state.exp_dates = exp_dates
+        st.session_state.ticker_loaded = ticker
+        st.session_state.exp_idx = 0
+        st.success(f"Экспирации загружены для {ticker} — выбери дату слева и нажми «Рассчитать уровни…».")
 
     except Exception as e:
-        st.error(f"Ошибка: {e}")
-        st.info("Открой «Debug: сырой ответ провайдера» и скачай JSON — пришли мне файл, если ошибка повторится.")
+        st.error(f"Ошибка загрузки экспираций: {e}")
 
 
 # === Standalone selection and calculation section (visible whenever expiries are loaded) ===
