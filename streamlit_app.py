@@ -321,10 +321,7 @@ if btn_load:
                     df_i, S_i = compute_chain_gex(dat["chain"], dat["quote"])
                     calls_n = len(dat["chain"].get("calls", []))
                     puts_n  = len(dat["chain"].get("puts",  []))
-                    per_exp_info.append(
-    f"{time.strftime('%Y-%m-%d', time.gmtime(int(e)))}: "
-    f"calls={calls_n}, puts={puts_n}, rows={len(df_i)}"
-)
+                    per_exp_info.append(f"{time.strftime('%Y-%m-%d', time.gmtime(int(e)))}: calls={calls_n}, puts={puts_n}, rows={len(df_i)}")
                     if not df_i.empty:
                         df_i["expiry"] = int(e)
                         all_rows.append(df_i)
@@ -355,10 +352,7 @@ if btn_load:
 
             c1, c2 = st.columns([2,1])
             with c1:
-                title = (
-    f"({ticker}, c {time.strftime('%Y-%m-%d', time.gmtime(picked[0]))} "
-    f"по {time.strftime('%Y-%m-%d', time.gmtime(picked[-1]))})"
-)
+                title = f"({ticker}, c {time.strftime('%Y-%m-%d', time.gmtime(picked[0]))} по {time.strftime('%Y-%m-%d', time.gmtime(picked[-1]))})"
                 st.plotly_chart(plot_profiles(prof, S=S_ref, flips=flips, pos=pos, neg=neg, title_note=title),
                                 use_container_width=True)
 
@@ -489,15 +483,7 @@ if btn_load:
                             dragmode=False,
                         )
                         # ВАЖНО: показываем подпись для КАЖДОГО отображаемого страйка
-                        fig2.update_xaxes(
-    tickmode="array",
-    tickvals=x.tolist(),
-    ticktext=tick_text,
-    tickangle=0,
-    ticklabeloverflow="allow",
-    fixedrange=True,
-)
-fig2.update_layout(margin=dict(b=80)), ticktext=tick_text, fixedrange=True)
+                        fig2.update_xaxes(tickmode="array", tickvals=x.tolist(), ticktext=tick_text, fixedrange=True)
                         if ymax > 0:
                             fig2.update_yaxes(range=[-1.2*ymax, 1.2*ymax])
                         fig2.update_yaxes(fixedrange=True, tickformat=",")
