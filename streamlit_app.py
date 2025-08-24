@@ -1,4 +1,5 @@
 # streamlit_app.py (v3_AG_vol)
+FIG_HEIGHT = 675
 import time, json, io, zipfile
 import requests
 import numpy as np
