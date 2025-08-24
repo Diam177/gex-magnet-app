@@ -248,7 +248,16 @@ def find_levels(profile: pd.DataFrame):
 
 def plot_profiles(profile: pd.DataFrame, S: float, flips, pos, neg, title_note=""):
     prof = profile.copy()
-    fig = go.Figure()
+    
+# ---- Панель кнопок над графиком ----
+st.markdown("### Управление отображением")
+
+selected_traces = st.multiselect(
+    "Выберите, что показывать:",
+    ["Net GEX +", "Net GEX -", "AG", "Call OI", "Put OI", "Call Volume", "Put Volume", "MAX Power"],
+    default=["Net GEX +", "Net GEX -", "AG"]
+)
+fig = go.Figure()
     fig.add_trace(go.Scatter(x=prof["strike"], y=prof["Magnet_smooth"], name="Magnet", mode="lines"))
     fig.add_trace(go.Scatter(x=prof["strike"], y=prof["NetGEX_smooth"], name="Net GEX (сглаж.)", mode="lines"))
     for f in flips or []:
@@ -429,9 +438,8 @@ if exp_dates:
                 neg_mask = ~pos_mask
 
                 fig = go.Figure()
-                fig.add_bar(
-                    x=x[pos_mask], y=y[pos_mask], name="Net GEX +", customdata=custom[pos_mask],
-                    marker_color="#33B5FF",
+                if "Net GEX +" in selected_traces:
+        fig.add_bar(x=x[pos_mask], y=y[pos_mask], name="Net GEX +", customdata=custom[pos_mask], marker_color="#33B5FF",
                     hovertemplate=(
                         "Strike: %{customdata[0]:.0f}<br>"
                         "Call OI: %{customdata[1]:,.0f}<br>"
@@ -441,9 +449,8 @@ if exp_dates:
                         "Net GEX: %{customdata[5]:,.1f}<extra></extra>"
                     )
                 )
-                fig.add_bar(
-                    x=x[neg_mask], y=y[neg_mask], name="Net GEX -", customdata=custom[neg_mask],
-                    marker_color="#FF3B30",
+                if "Net GEX -" in selected_traces:
+        fig.add_bar(x=x[neg_mask], y=y[neg_mask], name="Net GEX -", customdata=custom[neg_mask], marker_color="#FF3B30",
                     hovertemplate=(
                         "Strike: %{customdata[0]:.0f}<br>"
                         "Call OI: %{customdata[1]:,.0f}<br>"
