@@ -321,7 +321,7 @@ if btn_load:
                     df_i, S_i = compute_chain_gex(dat["chain"], dat["quote"])
                     calls_n = len(dat["chain"].get("calls", []))
                     puts_n  = len(dat["chain"].get("puts",  []))
-                    per_exp_info.append(f"{time.strftime('%Y-%m-%d', time.gmtime(e))}: calls={calls_n}, puts={puts_n}, rows={len(df_i)}")
+                    per_exp_info.append(f"{time.strftime('%Y-%m-%d', time.gmtime(int(e)))}: calls={calls_n}, puts={puts_n}, rows={len(df_i)}")
                     if not df_i.empty:
                         df_i["expiry"] = int(e)
                         all_rows.append(df_i)
@@ -368,130 +368,136 @@ if btn_load:
                                    file_name=f"{ticker}_magnet_levels.csv",
                                    mime="text/csv")
 
-# --- Net GEX по страйкам (таблица и диаграмма) ---
-try:
-    if not all_rows:
-        pass
-    else:
-        first_exp = int(picked[0])
-        df_selected = df_all[df_all["expiry"] == first_exp].copy()
-        if not df_selected.empty:
-            # Таблица Net GEX по страйкам
-            df_p = df_selected.copy()
-            if "volume" not in df_p.columns:
-                df_p["volume"] = 0.0
-            df_p["type"] = df_p["type"].str.lower().map({"call": "call", "put": "put"})
-            gex_by = df_p.groupby(["strike","type"])["gex_signed"].sum().unstack(fill_value=0.0)
-            for col in ("call","put"):
-                if col not in gex_by.columns:
-                    gex_by[col] = 0.0
-            gex_by = gex_by.rename(columns={"call":"GEX_call","put":"GEX_put"})
-            gex_by["Net_GEX"] = gex_by["GEX_call"] + gex_by["GEX_put"]
-            gex_by["|Net_GEX|"] = gex_by["Net_GEX"].abs()
-            gex_table = gex_by.reset_index().sort_values("strike")
-            st.subheader("Net GEX по страйкам для выбранной экспирации")
-            st.dataframe(gex_table, use_container_width=True)
-            st.download_button(
-                "Скачать Net GEX по страйкам (CSV)",
-                data=gex_table.to_csv(index=False).encode("utf-8"),
-                file_name=f"{ticker}_{time.strftime('%Y-%m-%d', time.gmtime(first_exp))}_netgex_by_strike.csv",
-                mime="text/csv"
-            )
-
-            # Данные для бар-чарта
-            grp_gex = df_p.groupby(["strike","type"])["gex_signed"].sum().unstack(fill_value=0.0)
-            grp_oi  = df_p.groupby(["strike","type"])["oi"].sum().unstack(fill_value=0.0)
-            grp_vol = df_p.groupby(["strike","type"])["volume"].sum().unstack(fill_value=0.0)
-            for g in (grp_gex, grp_oi, grp_vol):
-                for col in ("call","put"):
-                    if col not in g.columns:
-                        g[col] = 0.0
-            bar_df = grp_gex.rename(columns={"call":"GEX_call","put":"GEX_put"})
-            bar_df["Net_GEX"] = bar_df["GEX_call"] + bar_df["GEX_put"]
-            oi_df  = grp_oi.rename(columns={"call":"Call_OI","put":"Put_OI"})
-            vol_df = grp_vol.rename(columns={"call":"Call_Volume","put":"Put_Volume"})
-            merged = bar_df.join(oi_df).join(vol_df).reset_index().sort_values("strike")
-
-            x = merged["strike"].to_numpy()
-            y = merged["Net_GEX"].to_numpy()
-            custom = np.stack([
-                merged["strike"].to_numpy(),
-                merged["Call_OI"].to_numpy(),
-                merged["Put_OI"].to_numpy(),
-                merged["Call_Volume"].to_numpy(),
-                merged["Put_Volume"].to_numpy(),
-                merged["Net_GEX"].to_numpy()
-            ], axis=1)
-
-            # Обрезаем «хвосты» (как раньше), чтобы график был читаемым
-            abs_y = np.abs(y)
-            if abs_y.size:
-                max_abs = float(abs_y.max())
-                alpha = 0.02
-                sig = abs_y >= (alpha * max_abs)
-                if sig.any():
-                    idxs = np.where(sig)[0]
-                    i0, i1 = max(0, int(idxs.min())-3), min(len(x)-1, int(idxs.max())+3)
-                    x, y, custom = x[i0:i1+1], y[i0:i1+1], custom[i0:i1+1]
-
-            # Формируем подписи ДЛЯ КАЖДОГО отображаемого страйка
-            tick_text = []
-            for _v in x:
-                if abs(_v - round(_v)) < 1e-6:
-                    tick_text.append(str(int(round(_v))))
+            # --- Net GEX по страйкам (таблица и диаграмма) ---
+            try:
+                if not all_rows:
+                    pass
                 else:
-                    tick_text.append(f"{_v:.2f}".rstrip('0').rstrip('.'))
+                    first_exp = int(picked[0])
+                    df_selected = df_all[df_all["expiry"] == first_exp].copy()
+                    if not df_selected.empty:
+                        # Таблица Net GEX по страйкам
+                        df_p = df_selected.copy()
+                        if "volume" not in df_p.columns:
+                            df_p["volume"] = 0.0
+                        df_p["type"] = df_p["type"].str.lower().map({"call": "call", "put": "put"})
+                        gex_by = df_p.groupby(["strike","type"])["gex_signed"].sum().unstack(fill_value=0.0)
+                        for col in ("call","put"):
+                            if col not in gex_by.columns:
+                                gex_by[col] = 0.0
+                        gex_by = gex_by.rename(columns={"call":"GEX_call","put":"GEX_put"})
+                        gex_by["Net_GEX"] = gex_by["GEX_call"] + gex_by["GEX_put"]
+                        gex_by["|Net_GEX|"] = gex_by["Net_GEX"].abs()
+                        gex_table = gex_by.reset_index().sort_values("strike")
+                        st.subheader("Net GEX по страйкам для выбранной экспирации")
+                        st.dataframe(gex_table, use_container_width=True)
+                        st.download_button(
+                            "Скачать Net GEX по страйкам (CSV)",
+                            data=gex_table.to_csv(index=False).encode("utf-8"),
+                            file_name=f"{ticker}_{time.strftime('%Y-%m-%d', time.gmtime(first_exp))}_netgex_by_strike.csv",
+                            mime="text/csv"
+                        )
 
-            pos_mask = (y >= 0)
-            neg_mask = ~pos_mask
+                        # Данные для бар-чарта
+                        grp_gex = df_p.groupby(["strike","type"])["gex_signed"].sum().unstack(fill_value=0.0)
+                        grp_oi  = df_p.groupby(["strike","type"])["oi"].sum().unstack(fill_value=0.0)
+                        grp_vol = df_p.groupby(["strike","type"])["volume"].sum().unstack(fill_value=0.0)
+                        for g in (grp_gex, grp_oi, grp_vol):
+                            for col in ("call","put"):
+                                if col not in g.columns:
+                                    g[col] = 0.0
+                        bar_df = grp_gex.rename(columns={"call":"GEX_call","put":"GEX_put"})
+                        bar_df["Net_GEX"] = bar_df["GEX_call"] + bar_df["GEX_put"]
+                        oi_df  = grp_oi.rename(columns={"call":"Call_OI","put":"Put_OI"})
+                        vol_df = grp_vol.rename(columns={"call":"Call_Volume","put":"Put_Volume"})
+                        merged = bar_df.join(oi_df).join(vol_df).reset_index().sort_values("strike")
 
-            fig2 = go.Figure()
-            fig2.add_bar(x=x[pos_mask], y=y[pos_mask], name="Net GEX +", customdata=custom[pos_mask],
-                         marker_color="#33B5FF",
-                         hovertemplate=(
-                             "Strike: %{customdata[0]:.0f}<br>"
-                             "Call OI: %{customdata[1]:,.0f}<br>"
-                             "Put OI: %{customdata[2]:,.0f}<br>"
-                             "Call Volume: %{customdata[3]:,.0f}<br>"
-                             "Put Volume: %{customdata[4]:,.0f}<br>"
-                             "Net GEX: %{customdata[5]:,.1f}<extra></extra>"
-                         ))
-            fig2.add_bar(x=x[neg_mask], y=y[neg_mask], name="Net GEX -", customdata=custom[neg_mask],
-                         marker_color="#FF3B30",
-                         hovertemplate=(
-                             "Strike: %{customdata[0]:.0f}<br>"
-                             "Call OI: %{customdata[1]:,.0f}<br>"
-                             "Put OI: %{customdata[2]:,.0f}<br>"
-                             "Call Volume: %{customdata[3]:,.0f}<br>"
-                             "Put Volume: %{customdata[4]:,.0f}<br>"
-                             "Net GEX: %{customdata[5]:,.1f}<extra></extra>"
-                         ))
+                        x = merged["strike"].to_numpy()
+                        y = merged["Net_GEX"].to_numpy()
+                        custom = np.stack([
+                            merged["strike"].to_numpy(),
+                            merged["Call_OI"].to_numpy(),
+                            merged["Put_OI"].to_numpy(),
+                            merged["Call_Volume"].to_numpy(),
+                            merged["Put_Volume"].to_numpy(),
+                            merged["Net_GEX"].to_numpy()
+                        ], axis=1)
 
-            # Вертикальная линия спота
-            spot_x = float(S_ref)
-            fig2.add_vline(x=spot_x, line_width=2, line_dash="solid", line_color="#FFA500")
-            fig2.add_annotation(x=spot_x, y=1.02, yref="paper", showarrow=False,
-                                text=f"Price: {spot_x:.2f}", font=dict(color="#FFA500"))
+                        # Обрезаем «хвосты» (как раньше), чтобы график был читаемым
+                        abs_y = np.abs(y)
+                        if abs_y.size:
+                            max_abs = float(abs_y.max())
+                            alpha = 0.02
+                            sig = abs_y >= (alpha * max_abs)
+                            if sig.any():
+                                idxs = np.where(sig)[0]
+                                i0, i1 = max(0, int(idxs.min())-3), min(len(x)-1, int(idxs.max())+3)
+                                x, y, custom = x[i0:i1+1], y[i0:i1+1], custom[i0:i1+1]
 
-            ymax = float(np.abs(y).max()) if y.size else 0.0
-            fig2.update_layout(
-                barmode="relative",
-                showlegend=False,
-                margin=dict(l=40, r=20, t=30, b=40),
-                xaxis_title="Strike",
-                yaxis_title="Net GEX",
-                dragmode=False,
-            )
-            # ВАЖНО: показываем подпись для КАЖДОГО отображаемого страйка
-            fig2.update_xaxes(tickmode="array", tickvals=x.tolist(), ticktext=tick_text, fixedrange=True)
-            if ymax > 0:
-                fig2.update_yaxes(range=[-1.2*ymax, 1.2*ymax])
-            fig2.update_yaxes(fixedrange=True, tickformat=",")
-            st.plotly_chart(fig2, use_container_width=True, config={"displayModeBar": False, "scrollZoom": False})
-except Exception as _e:
-    st.warning(f"Не удалось построить диаграмму Net GEX по страйкам: {_e}")
+                        # Формируем подписи ДЛЯ КАЖДОГО отображаемого страйка
+                        tick_text = []
+                        for _v in x:
+                            if abs(_v - round(_v)) < 1e-6:
+                                tick_text.append(str(int(round(_v))))
+                            else:
+                                tick_text.append(f"{_v:.2f}".rstrip('0').rstrip('.'))
 
+                        pos_mask = (y >= 0)
+                        neg_mask = ~pos_mask
 
-    except Exception as e:
-        st.error(f"Ошибка: {e}")
-        st.info("Открой «Debug: сырой ответ провайдера» и скачай JSON — пришли мне файл, если ошибка повторится.")
+                        fig2 = go.Figure()
+                        fig2.add_bar(x=x[pos_mask], y=y[pos_mask], name="Net GEX +", customdata=custom[pos_mask],
+                                     marker_color="#33B5FF",
+                                     hovertemplate=(
+                                         "Strike: %{customdata[0]:.0f}<br>"
+                                         "Call OI: %{customdata[1]:,.0f}<br>"
+                                         "Put OI: %{customdata[2]:,.0f}<br>"
+                                         "Call Volume: %{customdata[3]:,.0f}<br>"
+                                         "Put Volume: %{customdata[4]:,.0f}<br>"
+                                         "Net GEX: %{customdata[5]:,.1f}<extra></extra>"
+                                     ))
+                        fig2.add_bar(x=x[neg_mask], y=y[neg_mask], name="Net GEX -", customdata=custom[neg_mask],
+                                     marker_color="#FF3B30",
+                                     hovertemplate=(
+                                         "Strike: %{customdata[0]:.0f}<br>"
+                                         "Call OI: %{customdata[1]:,.0f}<br>"
+                                         "Put OI: %{customdata[2]:,.0f}<br>"
+                                         "Call Volume: %{customdata[3]:,.0f}<br>"
+                                         "Put Volume: %{customdata[4]:,.0f}<br>"
+                                         "Net GEX: %{customdata[5]:,.1f}<extra></extra>"
+                                     ))
+
+                        # Вертикальная линия спота
+                        spot_x = float(S_ref)
+                        fig2.add_vline(x=spot_x, line_width=2, line_dash="solid", line_color="#FFA500")
+                        fig2.add_annotation(x=spot_x, y=1.02, yref="paper", showarrow=False,
+                                            text=f"Price: {spot_x:.2f}", font=dict(color="#FFA500"))
+
+                        ymax = float(np.abs(y).max()) if y.size else 0.0
+                        fig2.update_layout(
+                            barmode="relative",
+                            showlegend=False,
+                            margin=dict(l=40, r=20, t=30, b=40),
+                            xaxis_title="Strike",
+                            yaxis_title="Net GEX",
+                            dragmode=False,
+                        )
+                        # ВАЖНО: показываем подпись для КАЖДОГО отображаемого страйка
+                        fig2.update_xaxes(
+    tickmode="array",
+    tickvals=x.tolist(),
+    ticktext=tick_text,
+    tickangle=0,
+    ticklabeloverflow="allow",
+    fixedrange=True,
+)
+fig2.update_layout(margin=dict(b=80))  # add bottom margin for labels, ticktext=tick_text, fixedrange=True)
+                        if ymax > 0:
+                            fig2.update_yaxes(range=[-1.2*ymax, 1.2*ymax])
+                        fig2.update_yaxes(fixedrange=True, tickformat=",")
+                        st.plotly_chart(fig2, use_container_width=True, config={"displayModeBar": False, "scrollZoom": False})
+            except Exception as _e:
+                st.warning(f"Не удалось построить диаграмму Net GEX по страйкам: {_e}")
+        except Exception as e:
+            st.error(f"Ошибка: {e}")
+            st.info("Открой «Debug: сырой ответ провайдера» и скачай JSON — пришли мне файл, если ошибка повторится.")
