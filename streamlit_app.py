@@ -1,4 +1,4 @@
-# streamlit_app.py (v3_AG)
+# streamlit_app.py (v3_AG_vol)
 import time, json, io, zipfile
 import requests
 import numpy as np
@@ -188,11 +188,13 @@ def compute_chain_gex(chain: dict, quote: dict):
             K  = r.get("strike")
             oi = r.get("openInterest", 0) or 0
             iv = r.get("impliedVolatility", 0) or 0
+            vol = r.get("volume", 0) or 0
             if not (K and iv) or K<=0:
                 continue
             gamma = bsm_gamma(S, float(K), float(iv), tau)
             gex   = oi * gamma * 100 * S * sign
             rows.append({"strike": float(K), "type": typ, "oi": float(oi), "iv": float(iv),
+                         "volume": float(vol),
                          "tau": float(tau), "gex_signed": float(gex)})
     df = pd.DataFrame(rows)
     return df, float(S)
@@ -305,7 +307,6 @@ if exp_dates:
                        key="expiry_select_idx")
     st.session_state.exp_idx = idx
 
-    # UI-кнопка/переключатель для наложения Absolute Gamma
     show_ag = st.toggle("Показать абсолютную гамму (AG)", value=True)
 
     if st.button("Рассчитать уровни (эта + 7 следующих)", key="calc_levels_btn"):
@@ -357,13 +358,14 @@ if exp_dates:
 
             flips, pos, neg = find_levels(prof)
 
-            # --- Таблица Net GEX + Absolute Gamma по выбранной экспирации ---
             c_top, c_chart = st.columns([1, 2])
 
             if df_selected is not None and not df_selected.empty:
                 df_p = df_selected.copy()
+                # объёмы точно в числовой тип
                 if "volume" not in df_p.columns:
                     df_p["volume"] = 0.0
+                df_p["volume"] = pd.to_numeric(df_p["volume"], errors="coerce").fillna(0.0)
                 df_p["type"] = df_p["type"].str.lower().map({"call":"call","put":"put"})
 
                 grp_gex = df_p.groupby(["strike","type"])["gex_signed"].sum().unstack(fill_value=0.0)
@@ -376,20 +378,18 @@ if exp_dates:
 
                 bar_df = grp_gex.rename(columns={"call":"GEX_call","put":"GEX_put"})
                 bar_df["Net_GEX"] = bar_df["GEX_call"] + bar_df["GEX_put"]
-                # Absolute Gamma per strike (сумма модулей по типам)
                 bar_df["AG"] = bar_df["GEX_call"].abs() + bar_df["GEX_put"].abs()
 
                 oi_df  = grp_oi.rename(columns={"call":"Call_OI","put":"Put_OI"})
                 vol_df = grp_vol.rename(columns={"call":"Call_Volume","put":"Put_Volume"})
                 merged = bar_df.join(oi_df).join(vol_df).reset_index().sort_values("strike")
 
-                # таблица
                 gex_table = merged[["strike", "GEX_call", "GEX_put", "Net_GEX", "AG", "Call_OI", "Put_OI", "Call_Volume", "Put_Volume"]].copy()
                 gex_table["|Net_GEX|"] = gex_table["Net_GEX"].abs()
 
                 with c_top:
                     st.subheader("Net GEX / Absolute Gamma по страйкам")
-                    st.dataframe(gex_table, use_container_width=True, height=240)
+                    st.dataframe(gex_table, use_container_width=True, height=260)
                     st.download_button(
                         "Скачать Net GEX по страйкам (CSV)",
                         data=gex_table.to_csv(index=False).encode("utf-8"),
@@ -412,7 +412,6 @@ if exp_dates:
                     merged["AG"].to_numpy()
                 ], axis=1)
 
-                # подрезка "хвостов" по Net GEX (как раньше)
                 abs_y = np.abs(y)
                 if abs_y.size:
                     max_abs = float(abs_y.max())
@@ -430,7 +429,6 @@ if exp_dates:
                 neg_mask = ~pos_mask
 
                 fig = go.Figure()
-                # Bars: Net GEX
                 fig.add_bar(
                     x=x[pos_mask], y=y[pos_mask], name="Net GEX +", customdata=custom[pos_mask],
                     marker_color="#33B5FF",
@@ -456,12 +454,11 @@ if exp_dates:
                     )
                 )
 
-                # Overlay: Absolute Gamma (правый Y)
                 if show_ag and ag.size:
                     fig.add_trace(go.Scatter(
                         x=x, y=ag, yaxis="y2", name="AG",
                         mode="lines+markers",
-                        line=dict(color="#B366FF"),  # фиолетовый
+                        line=dict(color="#B366FF"),
                         fill="tozeroy",
                         fillcolor="rgba(179,102,255,0.25)",
                         line_shape="spline",
@@ -476,7 +473,6 @@ if exp_dates:
                         customdata=custom
                     ))
 
-                # Spot line + метка без наезда
                 spot_x = float(S_ref)
                 fig.add_vline(x=spot_x, line_width=2, line_dash="solid", line_color="#FFA500")
                 xmin, xmax = float(np.min(x)), float(np.max(x))
@@ -486,7 +482,6 @@ if exp_dates:
                                    xanchor=_xanchor, xshift=_xshift,
                                    text=f"Price: {spot_x:.2f}", font=dict(color="#FFA500"))
 
-                # Layout
                 ymax = float(np.abs(y).max()) if y.size else 0.0
                 y2max = float(np.max(ag)) if ag.size else 0.0
 
@@ -537,8 +532,6 @@ if exp_dates:
                 except Exception:
                     pass
 
-            # График профиля (как был) — ниже/выше можно оставить по желанию,
-            # но сейчас основные акценты на Net GEX + AG сделаны.
             tk = st.session_state.ticker_loaded or ticker
             title = (
                 f"({tk}, c {time.strftime('%Y-%m-%d', time.gmtime(int(picked[0])))} "
