@@ -428,15 +428,31 @@ if exp_dates:
                 pos_mask = (y >= 0)
                 neg_mask = ~pos_mask
                 
-                # ---- Панель кнопок над графиком ----
-                st.markdown("### Управление отображением")
-                selected_traces = st.multiselect(
-                    "Выберите, что показывать:",
-                    ["Net GEX +", "Net GEX -", "AG", "Call OI", "Put OI", "Call Volume", "Put Volume", "MAX Power"],
-                    default=["Net GEX +", "Net GEX -", "AG"]
+                
+                # ---- Панель кнопок (статичные) ----
+                st.markdown("### Выберите параметры:")
+                
+                st.markdown(
+                    """
+                    <div style="display:flex; gap:12px; flex-wrap:wrap; background:#1f1f1f; padding:14px 16px; border-radius:12px;">
+                      <div style="background:#1DA1F2; color:white; padding:8px 16px; border-radius:10px; font-weight:600;">Net GEX +</div>
+                      <div style="background:#F23645; color:white; padding:8px 16px; border-radius:10px; font-weight:600;">Net GEX -</div>
+                      <div style="background:#9B59B6; color:white; padding:8px 16px; border-radius:10px; font-weight:600;">AG</div>
+                      <div style="background:#2ECC71; color:white; padding:8px 16px; border-radius:10px; font-weight:600;">Call OI</div>
+                      <div style="background:#E74C3C; color:white; padding:8px 16px; border-radius:10px; font-weight:600;">Put OI</div>
+                      <div style="background:#1976D2; color:white; padding:8px 16px; border-radius:10px; font-weight:600;">Call Volume</div>
+                      <div style="background:#E67E22; color:white; padding:8px 16px; border-radius:10px; font-weight:600;">Put Volume</div>
+                      <div style="background:#F1C40F; color:#111; padding:8px 16px; border-radius:10px; font-weight:700;">MAX Power</div>
+                    </div>
+                    """ ,
+                    unsafe_allow_html=True
                 )
                 
+                # статический набор для совместимости с остальным кодом (кнопки не интерактивны)
+                selected_traces = ["Net GEX +", "Net GEX -", "AG"]
+                
                 fig = go.Figure()
+
                 if "Net GEX +" in selected_traces:
                     fig.add_bar(
                         x=x[pos_mask], y=y[pos_mask], name="Net GEX +", customdata=custom[pos_mask],
