@@ -254,7 +254,8 @@ def plot_profiles(profile: pd.DataFrame, S: float, flips, pos, neg, title_note="
     for f in flips or []:
         fig.add_vline(x=float(f), line_width=1, line_dash="dot", line_color="#888")
     fig.add_vline(x=float(S), line_width=2, line_dash="solid", line_color="#FFA500")
-    fig.update_layout(title=title_note, showlegend=True,
+    fig.update_layout(
+        title=title_note, showlegend=True,
         margin=dict(l=40,r=20,t=30,b=40),
         xaxis_title="Strike", yaxis_title="Value",
         dragmode=False
@@ -306,22 +307,7 @@ if exp_dates:
                        key="expiry_select_idx")
     st.session_state.exp_idx = idx
 
-    
-# --- Segmented buttons (static) ---
-for _k, _v in (("show_pos", True), ("show_neg", True), ("show_ag", True)):
-    st.session_state.setdefault(_k, _v)
-# toolbar layout
-c_btn1, c_btn2, c_btn3 = st.columns([1,1,1])
-with c_btn1:
-    if st.button(("✅ " if st.session_state.get("show_pos", True) else "❌ ") + "Net GEX +", key="btn_pos"):
-        st.session_state["show_pos"] = not st.session_state.get("show_pos", True)
-with c_btn2:
-    if st.button(("✅ " if st.session_state.get("show_neg", True) else "❌ ") + "Net GEX −", key="btn_neg"):
-        st.session_state["show_neg"] = not st.session_state.get("show_neg", True)
-with c_btn3:
-    if st.button(("✅ " if st.session_state.get("show_ag", True) else "❌ ") + "AG", key="btn_ag"):
-        st.session_state["show_ag"] = not st.session_state.get("show_ag", True)
-    show_ag = st.session_state.get("show_ag", True)
+    show_ag = st.toggle("Показать абсолютную гамму (AG)", value=True)
 
     if st.button("Рассчитать уровни (эта + 7 следующих)", key="calc_levels_btn"):
         try:
@@ -426,19 +412,6 @@ with c_btn3:
                     merged["AG"].to_numpy()
                 ], axis=1)
 
-                
-
-
-                # Cache arrays for re-render on button clicks (avoid recomputation)
-                try:
-                    st.session_state["_plot_cache"] = {
-                        "x": x.tolist(),
-                        "y": y.tolist(),
-                        "ag": ag.tolist(),
-                        "S_ref": float(S_ref) if S_ref is not None else None
-                    }
-                except Exception:
-                    pass
                 abs_y = np.abs(y)
                 if abs_y.size:
                     max_abs = float(abs_y.max())
@@ -520,7 +493,14 @@ with c_btn3:
                     xaxis_title="Strike",
                     yaxis_title="Net GEX",
                     dragmode=False,
-                    )
+                    yaxis2=dict(
+                        title="AG",
+                        overlaying="y",
+                        side="right",
+                        showgrid=False,
+                        tickformat=","
+                    ),
+                )
                 fig.update_xaxes(tickmode="array", tickvals=tickvals, ticktext=ticktext, tickangle=0)
                 fig.update_xaxes(fixedrange=True)
                 # динамический диапазон Y с учётом min/max и отступа
@@ -529,8 +509,9 @@ with c_btn3:
                 if y.size:
                     pad = 0.1 * (ymax - ymin) if ymax > ymin else abs(ymax)*0.1
                     fig.update_yaxes(range=[ymin - pad, ymax + pad])
-                if st.session_state.get("show_ag", True) and y2max > 0:
-                    fig.update_layout(yaxis2=dict(range=[0, 1.1*y2max], overlaying="y", side="right", showgrid=False, tickformat=","))
+                if y2max > 0:
+                    fig.update_layout(yaxis2=dict(range=[0, 1.2*y2max], title="AG", overlaying="y", side="right", showgrid=False, tickformat=","))
+
                 fig.update_yaxes(fixedrange=True, tickformat=",")
                 st.plotly_chart(fig, use_container_width=True, config={"displayModeBar": False, "scrollZoom": False})
 
@@ -562,78 +543,8 @@ with c_btn3:
             )
             prof_fig = plot_profiles(prof, S=S_ref, flips=flips, pos=pos, neg=neg, title_note=title)
             st.plotly_chart(prof_fig, use_container_width=True)
-            st.session_state['_rendered_now'] = True
 
         except Exception as e:
             st.error(f"Ошибка расчёта уровней: {e}")
-# (info message moved; preserved via cached re-render)
-
-
-# --- Re-render from cache when user only presses toolbar buttons ---
-try:
-    _cache = st.session_state.get("_plot_cache")
-    _tbl   = st.session_state.get("gex_table")
-    # Render only if not in the middle of a fresh calculation (to avoid duplicate plots)
-    if _cache and _tbl and not st.session_state.get("_rendered_now"):
-        x = np.array(_cache["x"], dtype=float)
-        y = np.array(_cache["y"], dtype=float)
-        ag = np.array(_cache["ag"], dtype=float)
-        S_ref = _cache.get("S_ref", None)
-
-        # Apply significance window based on current ALPHA_PCT
-        abs_y = np.abs(y)
-        if abs_y.size and float(abs_y.max())>0:
-            alpha = float(ALPHA_PCT)/100.0
-            sig = abs_y >= (alpha * float(abs_y.max()))
-            if sig.any():
-                idxs = np.where(sig)[0]
-                i0 = max(0, int(idxs.min())-3)
-                i1 = min(len(x)-1, int(idxs.max())+3)
-                x, y, ag = x[i0:i1+1], y[i0:i1+1], ag[i0:i1+1]
-
-        pos_mask = (y >= 0)
-        neg_mask = ~pos_mask
-        tickvals = x.tolist()
-        ticktext = [str(int(v)) if float(v).is_integer() else f"{v:g}" for v in x]
-
-        fig = go.Figure()
-        if st.session_state.get("show_pos", True):
-            fig.add_bar(x=x[pos_mask], y=y[pos_mask], name="Net GEX +")
-        if st.session_state.get("show_neg", True):
-            fig.add_bar(x=x[neg_mask], y=y[neg_mask], name="Net GEX -")
-        if st.session_state.get("show_ag", True) and ag.size:
-            fig.add_trace(go.Scatter(x=x, y=ag, yaxis="y2", name="AG", mode="lines+markers", fill="tozeroy"))
-
-        if S_ref is not None:
-            fig.add_vline(x=float(S_ref), line_width=2, line_dash="solid", line_color="#FFA500")
-            fig.add_annotation(x=float(S_ref), y=1.02, xref="x", yref="paper", showarrow=False,
-                               text=f"Price: {float(S_ref):.2f}", font=dict(color="#FFA500"), xanchor="center")
-
-        layout_kwargs = dict(
-            barmode="relative",
-            showlegend=True,
-            legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1),
-            margin=dict(l=40, r=40, t=40, b=40),
-            xaxis_title="Strike",
-            yaxis_title="Net GEX",
-            dragmode=False
-        )
-        if st.session_state.get("show_ag", True) and ag.size and float(np.nanmax(ag))>0:
-            layout_kwargs["yaxis2"] = dict(title="AG", range=[0, 1.1*float(np.nanmax(ag))], overlaying="y", side="right", showgrid=False, tickformat=",")
-
-        fig.update_layout(**layout_kwargs)
-        fig.update_xaxes(tickmode="array", tickvals=tickvals, ticktext=ticktext, fixedrange=True)
-        if y.size:
-            ymin, ymax = float(np.nanmin(y)), float(np.nanmax(y))
-            pad = 0.1*(ymax-ymin) if ymax>ymin else (abs(ymax)*0.1 if ymax!=0 else 1.0)
-            fig.update_yaxes(range=[ymin - pad, ymax + pad], fixedrange=True, tickformat=",")
-
-        # Always render the cached table (so it doesn't disappear on button clicks)
-        c_top, c_chart = st.columns([1, 2])
-        with c_top:
-            st.subheader("Net GEX / Absolute Gamma по страйкам")
-            st.dataframe(_tbl, use_container_width=True, height=260)
-        with c_chart:
-            st.plotly_chart(fig, use_container_width=True, config={"displayModeBar": False, "scrollZoom": False})
-except Exception:
-    pass
+else:
+    st.info("Чтобы начать, введите тикер и нажмите «Загрузить экспирации».")
